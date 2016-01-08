@@ -14,7 +14,7 @@ import django
 from django.core.management.base import BaseCommand, CommandError
 from django.core.management.utils import handle_extensions
 from django.template import Context, Engine
-from django.utils import archive
+from django.utils import archive, six
 from django.utils.six.moves.urllib.request import urlretrieve
 from django.utils.version import get_docs_version
 
@@ -98,12 +98,16 @@ class TemplateCommand(BaseCommand):
         base_name = '%s_name' % app_or_project
         base_subdir = '%s_template' % app_or_project
         base_directory = '%s_directory' % app_or_project
+        camel_case_name = 'camel_case_%s_name' % app_or_project
+        camel_case_value = ''.join(x for x in name.title() if x != '_')
 
         context = Context(dict(options, **{
             base_name: name,
             base_directory: top_dir,
+            camel_case_name: camel_case_value,
             'docs_version': get_docs_version(),
             'django_version': django.__version__,
+            'unicode_literals': '' if six.PY3 else 'from __future__ import unicode_literals\n\n',
         }), autoescape=False)
 
         # Setup a stub settings environment for template rendering
@@ -204,14 +208,21 @@ class TemplateCommand(BaseCommand):
             raise CommandError("you must provide %s %s name" % (
                 "an" if app_or_project == "app" else "a", app_or_project))
         # If it's not a valid directory name.
-        if not re.search(r'^[_a-zA-Z]\w*$', name):
-            # Provide a smart error message, depending on the error.
-            if not re.search(r'^[_a-zA-Z]', name):
-                message = 'make sure the name begins with a letter or underscore'
-            else:
-                message = 'use only numbers, letters and underscores'
-            raise CommandError("%r is not a valid %s name. Please %s." %
-                               (name, app_or_project, message))
+        if six.PY2:
+            if not re.search(r'^[_a-zA-Z]\w*$', name):
+                # Provide a smart error message, depending on the error.
+                if not re.search(r'^[_a-zA-Z]', name):
+                    message = 'make sure the name begins with a letter or underscore'
+                else:
+                    message = 'use only numbers, letters and underscores'
+                raise CommandError("%r is not a valid %s name. Please %s." %
+                                   (name, app_or_project, message))
+        else:
+            if not name.isidentifier():
+                raise CommandError(
+                    "%r is not a valid %s name. Please make sure the name is "
+                    "a valid identifier." % (name, app_or_project)
+                )
 
     def download(self, url):
         """

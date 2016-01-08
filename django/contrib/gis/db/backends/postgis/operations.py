@@ -3,17 +3,17 @@ import re
 from django.conf import settings
 from django.contrib.gis.db.backends.base.operations import \
     BaseSpatialOperations
-from django.contrib.gis.db.backends.postgis.adapter import PostGISAdapter
 from django.contrib.gis.db.backends.utils import SpatialOperator
 from django.contrib.gis.geometry.backend import Geometry
 from django.contrib.gis.measure import Distance
 from django.core.exceptions import ImproperlyConfigured
-from django.db.backends.postgresql_psycopg2.operations import \
-    DatabaseOperations
+from django.db.backends.postgresql.operations import DatabaseOperations
 from django.db.utils import ProgrammingError
 from django.utils.functional import cached_property
 
+from .adapter import PostGISAdapter
 from .models import PostGISGeometryColumns, PostGISSpatialRefSys
+from .pgraster import from_pgraster, get_pgraster_srid, to_pgraster
 
 
 class PostGISOperator(SpatialOperator):
@@ -31,14 +31,17 @@ class PostGISOperator(SpatialOperator):
 
 
 class PostGISDistanceOperator(PostGISOperator):
-    sql_template = '%(func)s(%(lhs)s, %(rhs)s) %(op)s %%s'
+    sql_template = '%(func)s(%(lhs)s, %(rhs)s) %(op)s %(value)s'
 
     def as_sql(self, connection, lookup, template_params, sql_params):
         if not lookup.lhs.output_field.geography and lookup.lhs.output_field.geodetic(connection):
             sql_template = self.sql_template
             if len(lookup.rhs) == 3 and lookup.rhs[-1] == 'spheroid':
                 template_params.update({'op': self.op, 'func': 'ST_Distance_Spheroid'})
-                sql_template = '%(func)s(%(lhs)s, %(rhs)s, %%s) %(op)s %%s'
+                sql_template = '%(func)s(%(lhs)s, %(rhs)s, %%s) %(op)s %(value)s'
+                # Using distance_spheroid requires the spheroid of the field as
+                # a parameter.
+                sql_params.insert(1, lookup.lhs.output_field._spheroid)
             else:
                 template_params.update({'op': self.op, 'func': 'ST_Distance_Sphere'})
             return sql_template % template_params, sql_params
@@ -53,7 +56,6 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
     version_regex = re.compile(r'^(?P<major>\d)\.(?P<minor1>\d)\.(?P<minor2>\d+)')
 
     Adapter = PostGISAdapter
-    Adaptor = Adapter  # Backwards-compatibility alias.
 
     gis_operators = {
         'bbcontains': PostGISOperator(op='~'),
@@ -67,7 +69,7 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
         'left': PostGISOperator(op='<<'),
         'right': PostGISOperator(op='>>'),
         'strictly_below': PostGISOperator(op='<<|'),
-        'stricly_above': PostGISOperator(op='|>>'),
+        'strictly_above': PostGISOperator(op='|>>'),
         'same_as': PostGISOperator(op='~='),
         'exact': PostGISOperator(op='~='),  # alias of same_as
         'contains_properly': PostGISOperator(func='ST_ContainsProperly'),
@@ -150,11 +152,17 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
         if hasattr(settings, 'POSTGIS_VERSION'):
             version = settings.POSTGIS_VERSION
         else:
+            # Run a basic query to check the status of the connection so we're
+            # sure we only raise the error below if the problem comes from
+            # PostGIS and not from PostgreSQL itself (see #24862).
+            self._get_postgis_func('version')
+
             try:
                 vtup = self.postgis_version_tuple()
             except ProgrammingError:
                 raise ImproperlyConfigured(
-                    'Cannot determine PostGIS version for database "%s". '
+                    'Cannot determine PostGIS version for database "%s" '
+                    'using command "SELECT postgis_lib_version()". '
                     'GeoDjango requires at least PostGIS version 2.0. '
                     'Was the database created from a spatial database '
                     'template?' % self.connection.settings_dict['NAME']
@@ -199,12 +207,11 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
 
     def geo_db_type(self, f):
         """
-        Return the database field type for the given geometry field.
-        Typically this is `None` because geometry columns are added via
-        the `AddGeometryColumn` stored procedure, unless the field
-        has been specified to be of geography type instead.
+        Return the database field type for the given spatial field.
         """
-        if f.geography:
+        if f.geom_type == 'RASTER':
+            return 'raster'
+        elif f.geography:
             if f.srid != 4326:
                 raise NotImplementedError('PostGIS only supports geography columns with an SRID of 4326.')
 
@@ -218,7 +225,7 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
                 geom_type = f.geom_type
             return 'geometry(%s,%d)' % (geom_type, f.srid)
 
-    def get_distance(self, f, dist_val, lookup_type):
+    def get_distance(self, f, dist_val, lookup_type, handle_spheroid=True):
         """
         Retrieve the distance parameters for the given geometry field,
         distance lookup value, and the distance lookup type.
@@ -228,11 +235,8 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
         projected geometry columns.  In addition, it has to take into account
         the geography column type.
         """
-        # Getting the distance parameter and any options.
-        if len(dist_val) == 1:
-            value, option = dist_val[0], None
-        else:
-            value, option = dist_val
+        # Getting the distance parameter
+        value = dist_val[0]
 
         # Shorthand boolean flags.
         geodetic = f.geodetic(self.connection)
@@ -252,13 +256,17 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
             # Assuming the distance is in the units of the field.
             dist_param = value
 
-        if (not geography and geodetic and lookup_type != 'dwithin'
-                and option == 'spheroid'):
-            # using distance_spheroid requires the spheroid of the field as
-            # a parameter.
-            return [f._spheroid, dist_param]
-        else:
-            return [dist_param]
+        params = [dist_param]
+        # handle_spheroid *might* be dropped in Django 2.0 as PostGISDistanceOperator
+        # also handles it (#25524).
+        if handle_spheroid and len(dist_val) > 1:
+            option = dist_val[1]
+            if (not geography and geodetic and lookup_type != 'dwithin'
+                    and option == 'spheroid'):
+                # using distance_spheroid requires the spheroid of the field as
+                # a parameter.
+                params.insert(0, f._spheroid)
+        return params
 
     def get_geom_placeholder(self, f, value, compiler):
         """
@@ -266,10 +274,21 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
         SRID of the field.  Specifically, this routine will substitute in the
         ST_Transform() function call.
         """
-        if value is None or value.srid == f.srid:
-            placeholder = '%s'
+        # Get the srid for this object
+        if value is None:
+            value_srid = None
+        elif f.geom_type == 'RASTER':
+            value_srid = get_pgraster_srid(value)
         else:
-            # Adding Transform() to the SQL placeholder.
+            value_srid = value.srid
+
+        # Adding Transform() to the SQL placeholder if the value srid
+        # is not equal to the field srid.
+        if value_srid is None or value_srid == f.srid:
+            placeholder = '%s'
+        elif f.geom_type == 'RASTER':
+            placeholder = '%s((%%s)::raster, %s)' % (self.transform, f.srid)
+        else:
             placeholder = '%s(%%s, %s)' % (self.transform, f.srid)
 
         if hasattr(value, 'as_sql'):
@@ -353,3 +372,11 @@ class PostGISOperations(BaseSpatialOperations, DatabaseOperations):
 
     def spatial_ref_sys(self):
         return PostGISSpatialRefSys
+
+    # Methods to convert between PostGIS rasters and dicts that are
+    # readable by GDALRaster.
+    def parse_raster(self, value):
+        return from_pgraster(value)
+
+    def deconstruct_raster(self, value):
+        return to_pgraster(value)

@@ -84,6 +84,7 @@ urlpatterns = [
     url(r'^jsi18n_admin/$', i18n.javascript_catalog, js_info_dict_admin),
     url(r'^jsi18n_template/$', views.jsi18n),
     url(r'^jsi18n_multi_catalogs/$', views.jsi18n_multi_catalogs),
+    url(r'^jsoni18n/$', i18n.json_catalog, js_info_dict),
 
     # Static views
     url(r'^site_media/(?P<path>.*)$', static.serve, {'document_root': media_dir}),
@@ -96,6 +97,10 @@ urlpatterns += i18n_patterns(
 urlpatterns += [
     url(r'view_exception/(?P<n>[0-9]+)/$', views.view_exception, name='view_exception'),
     url(r'template_exception/(?P<n>[0-9]+)/$', views.template_exception, name='template_exception'),
-    url(r'^raises_template_does_not_exist/(?P<path>.+)$', views.raises_template_does_not_exist, name='raises_template_does_not_exist'),
+    url(
+        r'^raises_template_does_not_exist/(?P<path>.+)$',
+        views.raises_template_does_not_exist,
+        name='raises_template_does_not_exist'
+    ),
     url(r'^render_no_template/$', views.render_no_template, name='render_no_template'),
 ]

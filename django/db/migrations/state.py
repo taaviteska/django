@@ -29,9 +29,30 @@ def _get_app_label_and_model_name(model, app_label=''):
         return model._meta.app_label, model._meta.model_name
 
 
+def _get_related_models(m):
+    """
+    Return all models that have a direct relationship to the given model.
+    """
+    related_models = [
+        subclass for subclass in m.__subclasses__()
+        if issubclass(subclass, models.Model)
+    ]
+    related_fields_models = set()
+    for f in m._meta.get_fields(include_parents=True, include_hidden=True):
+        if f.is_relation and f.related_model is not None and not isinstance(f.related_model, six.string_types):
+            related_fields_models.add(f.model)
+            related_models.append(f.related_model)
+    # Reverse accessors of foreign keys to proxy models are attached to their
+    # concrete proxied model.
+    opts = m._meta
+    if opts.proxy and m in related_fields_models:
+        related_models.append(opts.concrete_model)
+    return related_models
+
+
 def get_related_models_recursive(model):
     """
-    Returns all models that have a direct or indirect relationship
+    Return all models that have a direct or indirect relationship
     to the given model.
 
     Relationships are either defined by explicit relational fields, like
@@ -40,23 +61,14 @@ def get_related_models_recursive(model):
     however, that a model inheriting from a concrete model is also related to
     its superclass through the implicit *_ptr OneToOneField on the subclass.
     """
-    def _related_models(m):
-        return [
-            f.related_model for f in m._meta.get_fields(include_parents=True, include_hidden=True)
-            if f.is_relation and not isinstance(f.related_model, six.string_types)
-        ] + [
-            subclass for subclass in m.__subclasses__()
-            if issubclass(subclass, models.Model)
-        ]
-
     seen = set()
-    queue = _related_models(model)
+    queue = _get_related_models(model)
     for rel_mod in queue:
         rel_app_label, rel_model_name = rel_mod._meta.app_label, rel_mod._meta.model_name
         if (rel_app_label, rel_model_name) in seen:
             continue
         seen.add((rel_app_label, rel_model_name))
-        queue.extend(_related_models(rel_mod))
+        queue.extend(_get_related_models(rel_mod))
     return seen - {(model._meta.app_label, model._meta.model_name)}
 
 
@@ -232,9 +244,40 @@ class StateApps(Apps):
         if ignore_swappable:
             pending_models -= {make_model_tuple(settings.AUTH_USER_MODEL)}
         if pending_models:
-            msg = "Unhandled pending operations for models: %s"
-            labels = (".".join(model_key) for model_key in self._pending_operations)
-            raise ValueError(msg % ", ".join(labels))
+            raise ValueError(self._pending_models_error(pending_models))
+
+    def _pending_models_error(self, pending_models):
+        """
+        Almost all internal uses of lazy operations are to resolve string model
+        references in related fields. We can extract the fields from those
+        operations and use them to provide a nicer error message.
+
+        This will work for any function passed to lazy_related_operation() that
+        has a keyword argument called 'field'.
+        """
+        def extract_field(operation):
+            # operation is annotated with the field in
+            # apps.register.Apps.lazy_model_operation().
+            return getattr(operation, 'field', None)
+
+        def extract_field_names(operations):
+            return (str(field) for field in map(extract_field, operations) if field)
+
+        get_ops = self._pending_operations.__getitem__
+        # Ordered list of pairs of the form
+        # ((app_label, model_name), [field_name_1, field_name_2, ...])
+        models_fields = sorted(
+            (model_key, sorted(extract_field_names(get_ops(model_key))))
+            for model_key in pending_models
+        )
+
+        def model_text(model_key, fields):
+            field_list = ", ".join(fields)
+            field_text = " (referred to by fields: %s)" % field_list if fields else ""
+            return ("%s.%s" % model_key) + field_text
+
+        msg = "Unhandled pending operations for models:"
+        return "\n  ".join([msg] + [model_text(*i) for i in models_fields])
 
     @contextmanager
     def bulk_update(self):
@@ -357,10 +400,9 @@ class ModelState(object):
                 continue
             if isinstance(field, OrderWrt):
                 continue
-            name, path, args, kwargs = field.deconstruct()
-            field_class = import_string(path)
+            name = force_text(field.name, strings_only=True)
             try:
-                fields.append((name, field_class(*args, **kwargs)))
+                fields.append((name, field.clone()))
             except TypeError as e:
                 raise TypeError("Couldn't reconstruct field %s on %s: %s" % (
                     name,
@@ -369,10 +411,9 @@ class ModelState(object):
                 ))
         if not exclude_rels:
             for field in model._meta.local_many_to_many:
-                name, path, args, kwargs = field.deconstruct()
-                field_class = import_string(path)
+                name = force_text(field.name, strings_only=True)
                 try:
-                    fields.append((name, field_class(*args, **kwargs)))
+                    fields.append((name, field.clone()))
                 except TypeError as e:
                     raise TypeError("Couldn't reconstruct m2m field %s on %s: %s" % (
                         name,
@@ -467,7 +508,10 @@ class ModelState(object):
                 (name, instance) for name, (cc, instance) in
                 sorted(managers_mapping.items(), key=lambda v: v[1])
             ]
-            if managers == [(default_manager_name, models.Manager())]:
+            # If the only manager on the model is the default manager defined
+            # by Django (`objects = models.Manager()`), this manager will not
+            # be added to the model state.
+            if managers == [('objects', models.Manager())]:
                 managers = []
         else:
             managers = []
@@ -498,13 +542,6 @@ class ModelState(object):
                 for k, v in value.items()
             }
         return value
-
-    def construct_fields(self):
-        "Deep-clone the fields using deconstruction"
-        for name, field in self.fields:
-            _, path, args, kwargs = field.deconstruct()
-            field_class = import_string(path)
-            yield name, field_class(*args, **kwargs)
 
     def construct_managers(self):
         "Deep-clone the managers using deconstruction"
@@ -546,7 +583,7 @@ class ModelState(object):
         except LookupError:
             raise InvalidBasesError("Cannot resolve one or more bases from %r" % (self.bases,))
         # Turn fields into a dict for the body, add other bits
-        body = dict(self.construct_fields())
+        body = {name: field.clone() for name, field in self.fields}
         body['Meta'] = meta
         body['__module__'] = "__fake__"
 

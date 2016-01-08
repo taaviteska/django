@@ -56,7 +56,7 @@ To get from a URL to a view, Django uses what are known as 'URLconfs'. A
 URLconf maps URL patterns (described as regular expressions) to views.
 
 This tutorial provides basic instruction in the use of URLconfs, and you can
-refer to :mod:`django.core.urlresolvers` for more information.
+refer to :mod:`django.urls` for more information.
 
 Writing more views
 ==================
@@ -103,7 +103,7 @@ method and display whatever ID you provide in the URL. Try
 "/polls/34/results/" and "/polls/34/vote/" too -- these will display the
 placeholder results and voting pages.
 
-When somebody requests a page from your Web site -- say, "/polls/34/", Django
+When somebody requests a page from your website -- say, "/polls/34/", Django
 will load the ``mysite.urls`` Python module because it's pointed to by the
 :setting:`ROOT_URLCONF` setting. It finds the variable named ``urlpatterns``
 and traverses the regular expressions in order. The
@@ -177,7 +177,7 @@ commas, according to publication date:
 
     def index(request):
         latest_question_list = Question.objects.order_by('-pub_date')[:5]
-        output = ', '.join([p.question_text for p in latest_question_list])
+        output = ', '.join([q.question_text for q in latest_question_list])
         return HttpResponse(output)
 
     # Leave the rest of the views (detail, results, vote) unchanged
@@ -235,7 +235,7 @@ Now let's update our ``index`` view in ``polls/views.py`` to use the template:
     :filename: polls/views.py
 
     from django.http import HttpResponse
-    from django.template import RequestContext, loader
+    from django.template import loader
 
     from .models import Question
 
@@ -243,10 +243,10 @@ Now let's update our ``index`` view in ``polls/views.py`` to use the template:
     def index(request):
         latest_question_list = Question.objects.order_by('-pub_date')[:5]
         template = loader.get_template('polls/index.html')
-        context = RequestContext(request, {
+        context = {
             'latest_question_list': latest_question_list,
-        })
-        return HttpResponse(template.render(context))
+        }
+        return HttpResponse(template.render(context, request))
 
 That code loads the template called  ``polls/index.html`` and passes it a
 context. The context is a dictionary mapping template variable names to Python
@@ -278,9 +278,9 @@ rewritten:
         return render(request, 'polls/index.html', context)
 
 Note that once we've done this in all these views, we no longer need to import
-:mod:`~django.template.loader`, :class:`~django.template.RequestContext` and
-:class:`~django.http.HttpResponse` (you'll want to keep ``HttpResponse`` if you
-still have the stub methods for ``detail``, ``results``, and ``vote``).
+:mod:`~django.template.loader` and :class:`~django.http.HttpResponse` (you'll
+want to keep ``HttpResponse`` if you still have the stub methods for ``detail``,
+``results``, and ``vote``).
 
 The :func:`~django.shortcuts.render` function takes the request object as its
 first argument, a template name as its second argument and a dictionary as its
@@ -442,18 +442,22 @@ view, and so might an app on the same project that is for a blog. How does one
 make it so that Django knows which app view to create for a url when using the
 ``{% url %}`` template tag?
 
-The answer is to add namespaces to your root URLconf. In the ``mysite/urls.py``
-file, go ahead and change it to include namespacing:
+The answer is to add namespaces to your  URLconf. In the ``polls/urls.py``
+file, go ahead and add an ``app_name`` to set the application namespace:
 
 .. snippet::
-    :filename: mysite/urls.py
+    :filename: polls/urls.py
 
-    from django.conf.urls import include, url
-    from django.contrib import admin
+    from django.conf.urls import url
 
+    from . import views
+
+    app_name = 'polls'
     urlpatterns = [
-        url(r'^polls/', include('polls.urls', namespace="polls")),
-        url(r'^admin/', include(admin.site.urls)),
+        url(r'^$', views.index, name='index'),
+        url(r'^(?P<question_id>[0-9]+)/$', views.detail, name='detail'),
+        url(r'^(?P<question_id>[0-9]+)/results/$', views.results, name='results'),
+        url(r'^(?P<question_id>[0-9]+)/vote/$', views.vote, name='vote'),
     ]
 
 Now change your ``polls/index.html`` template from:

@@ -112,6 +112,20 @@ class TestSigner(SimpleTestCase):
         s = signing.Signer(binary_key)
         self.assertEqual('foo:6NB0fssLW5RQvZ3Y-MTerq2rX7w', s.sign('foo'))
 
+    def test_valid_sep(self):
+        separators = ['/', '*sep*', ',']
+        for sep in separators:
+            signer = signing.Signer('predictable-secret', sep=sep)
+            self.assertEqual('foo%ssH9B01cZcJ9FoT_jEVkRkNULrl8' % sep, signer.sign('foo'))
+
+    def test_invalid_sep(self):
+        """should warn on invalid separator"""
+        msg = 'Unsafe Signer separator: %r (cannot be empty or consist of only A-z0-9-_=)'
+        separators = ['', '-', 'abc']
+        for sep in separators:
+            with self.assertRaisesMessage(ValueError, msg % sep):
+                signing.Signer(sep=sep)
+
 
 class TestTimestampSigner(SimpleTestCase):
 

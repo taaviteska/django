@@ -21,6 +21,7 @@ from django.utils import lru_cache
 from django.utils._os import upath
 from django.utils.encoding import force_text
 from django.utils.functional import cached_property
+from django.utils.glob import glob_escape
 
 try:
     import bz2
@@ -83,6 +84,16 @@ class Command(BaseCommand):
         }
         if has_bz2:
             self.compression_formats['bz2'] = (bz2.BZ2File, 'r')
+
+        # Django's test suite repeatedly tries to load initial_data fixtures
+        # from apps that don't have any fixtures. Because disabling constraint
+        # checks can be expensive on some database (especially MSSQL), bail
+        # out early if no fixtures are found.
+        for fixture_label in fixture_labels:
+            if self.find_fixtures(fixture_label):
+                break
+        else:
+            return
 
         with connection.constraint_checks_disabled():
             for fixture_label in fixture_labels:
@@ -209,7 +220,8 @@ class Command(BaseCommand):
             if self.verbosity >= 2:
                 self.stdout.write("Checking %s for fixtures..." % humanize(fixture_dir))
             fixture_files_in_dir = []
-            for candidate in glob.iglob(os.path.join(fixture_dir, fixture_name + '*')):
+            path = os.path.join(fixture_dir, fixture_name)
+            for candidate in glob.iglob(glob_escape(path) + '*'):
                 if os.path.basename(candidate) in targets:
                     # Save the fixture_dir and fixture_name for future error messages.
                     fixture_files_in_dir.append((candidate, fixture_dir, fixture_name))
@@ -227,8 +239,7 @@ class Command(BaseCommand):
             fixture_files.extend(fixture_files_in_dir)
 
         if not fixture_files:
-            # Warning kept for backwards-compatibility; why not an exception?
-            warnings.warn("No fixture named '%s' found." % fixture_name)
+            raise CommandError("No fixture named '%s' found." % fixture_name)
 
         return fixture_files
 

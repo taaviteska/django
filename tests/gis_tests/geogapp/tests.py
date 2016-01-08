@@ -11,7 +11,7 @@ from django.contrib.gis.gdal import HAS_GDAL
 from django.contrib.gis.measure import D
 from django.test import TestCase, ignore_warnings, skipUnlessDBFeature
 from django.utils._os import upath
-from django.utils.deprecation import RemovedInDjango21Warning
+from django.utils.deprecation import RemovedInDjango20Warning
 
 from ..utils import oracle, postgis
 from .models import City, County, Zipcode
@@ -41,7 +41,7 @@ class GeographyTest(TestCase):
             self.assertEqual(['Dallas', 'Houston', 'Oklahoma City'], cities)
 
     @skipUnlessDBFeature("has_distance_method", "supports_distance_geodetic")
-    @ignore_warnings(category=RemovedInDjango21Warning)
+    @ignore_warnings(category=RemovedInDjango20Warning)
     def test03_distance_method(self):
         "Testing GeoQuerySet.distance() support on non-point geography fields."
         # `GeoQuerySet.distance` is not allowed geometry fields.
@@ -94,11 +94,11 @@ class GeographyTest(TestCase):
             self.assertEqual(state, c.state)
 
     @skipUnlessDBFeature("has_area_method", "supports_distance_geodetic")
-    @ignore_warnings(category=RemovedInDjango21Warning)
+    @ignore_warnings(category=RemovedInDjango20Warning)
     def test06_geography_area(self):
         "Testing that Area calculations work on geography columns."
         # SELECT ST_Area(poly) FROM geogapp_zipcode WHERE code='77002';
-        ref_area = 5439100.95415646 if oracle else 5439084.70637573
+        ref_area = 5439100.13586914 if oracle else 5439084.70637573
         tol = 5
         z = Zipcode.objects.area().get(code='77002')
         self.assertAlmostEqual(z.area.sq_m, ref_area, tol)
@@ -113,7 +113,10 @@ class GeographyFunctionTests(TestCase):
         """
         Testing Distance() support on non-point geography fields.
         """
-        ref_dists = [0, 4891.20, 8071.64, 9123.95]
+        if oracle:
+            ref_dists = [0, 4899.68, 8081.30, 9115.15]
+        else:
+            ref_dists = [0, 4891.20, 8071.64, 9123.95]
         htown = City.objects.get(name='Houston')
         qs = Zipcode.objects.annotate(distance=Distance('poly', htown.point))
         for z, ref in zip(qs, ref_dists):
@@ -125,7 +128,7 @@ class GeographyFunctionTests(TestCase):
         Testing that Area calculations work on geography columns.
         """
         # SELECT ST_Area(poly) FROM geogapp_zipcode WHERE code='77002';
-        ref_area = 5439100.95415646 if oracle else 5439084.70637573
+        ref_area = 5439100.13587 if oracle else 5439084.70637573
         tol = 5
         z = Zipcode.objects.annotate(area=Area('poly')).get(code='77002')
         self.assertAlmostEqual(z.area.sq_m, ref_area, tol)

@@ -47,25 +47,15 @@ wkt_writer_write = GEOSFuncFactory(
     'GEOSWKTWriter_write', argtypes=[WKT_WRITE_PTR, GEOM_PTR], restype=geos_char_p, errcheck=check_string
 )
 
-
-class WKTOutputDim(GEOSFuncFactory):
-    def get_func(self, *args, **kwargs):
-        try:
-            return super(WKTOutputDim, self).get_func(*args, **kwargs)
-        except AttributeError:
-            # GEOSWKTWriter_get/setOutputDimension has been introduced in GEOS 3.3.0
-            # Always return 2 if not available
-            return {
-                'GEOSWKTWriter_getOutputDimension': lambda ptr: 2,
-                'GEOSWKTWriter_setOutputDimension': lambda ptr, dim: None,
-            }.get(self.func_name)
-
-wkt_writer_get_outdim = WKTOutputDim(
+wkt_writer_get_outdim = GEOSFuncFactory(
     'GEOSWKTWriter_getOutputDimension', argtypes=[WKT_WRITE_PTR], restype=c_int
 )
-wkt_writer_set_outdim = WKTOutputDim(
+wkt_writer_set_outdim = GEOSFuncFactory(
     'GEOSWKTWriter_setOutputDimension', argtypes=[WKT_WRITE_PTR, c_int]
 )
+
+wkt_writer_set_trim = GEOSFuncFactory('GEOSWKTWriter_setTrim', argtypes=[WKT_WRITE_PTR, c_char])
+wkt_writer_set_precision = GEOSFuncFactory('GEOSWKTWriter_setRoundingPrecision', argtypes=[WKT_WRITE_PTR, c_int])
 
 # WKBReader routines
 wkb_reader_create = GEOSFuncFactory('GEOSWKBReader_create', restype=WKB_READ_PTR)
@@ -125,11 +115,18 @@ class IOBase(GEOSBase):
     def __init__(self):
         # Getting the pointer with the constructor.
         self.ptr = self._constructor()
+        # Loading the real destructor function at this point as doing it in
+        # __del__ is too late (import error).
+        self._destructor.func = self._destructor.get_func(
+            *self._destructor.args, **self._destructor.kwargs
+        )
 
     def __del__(self):
         # Cleaning up with the appropriate destructor.
-        if self._ptr:
+        try:
             self._destructor(self._ptr)
+        except (AttributeError, TypeError):
+            pass  # Some part might already have been garbage collected
 
 # ### Base WKB/WKT Reading and Writing objects ###
 
@@ -170,6 +167,9 @@ class WKTWriter(IOBase):
     _destructor = wkt_writer_destroy
     ptr_type = WKT_WRITE_PTR
 
+    _trim = False
+    _precision = None
+
     def write(self, geom):
         "Returns the WKT representation of the given geometry."
         return wkt_writer_write(self.ptr, geom.ptr)
@@ -183,6 +183,27 @@ class WKTWriter(IOBase):
         if new_dim not in (2, 3):
             raise ValueError('WKT output dimension must be 2 or 3')
         wkt_writer_set_outdim(self.ptr, new_dim)
+
+    @property
+    def trim(self):
+        return self._trim
+
+    @trim.setter
+    def trim(self, flag):
+        self._trim = bool(flag)
+        wkt_writer_set_trim(self.ptr, b'\x01' if flag else b'\x00')
+
+    @property
+    def precision(self):
+        return self._precision
+
+    @precision.setter
+    def precision(self, precision):
+        if isinstance(precision, int) and precision >= 0 or precision is None:
+            self._precision = precision
+            wkt_writer_set_precision(self.ptr, -1 if precision is None else precision)
+        else:
+            raise AttributeError('WKT output rounding precision must be non-negative integer or None.')
 
 
 class WKBWriter(IOBase):

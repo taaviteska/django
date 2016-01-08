@@ -6,6 +6,7 @@ import json
 import os
 import pickle
 import unittest
+import uuid
 
 from django.core.exceptions import SuspiciousOperation
 from django.core.serializers.json import DjangoJSONEncoder
@@ -20,10 +21,8 @@ from django.http import (
 from django.test import SimpleTestCase
 from django.utils import six
 from django.utils._os import upath
-from django.utils.encoding import force_text, smart_str
-from django.utils.functional import lazy
-
-lazystr = lazy(force_text, six.text_type)
+from django.utils.encoding import smart_str
+from django.utils.functional import lazystr
 
 
 class QueryDictTests(unittest.TestCase):
@@ -308,7 +307,7 @@ class HttpResponseTests(unittest.TestCase):
         h['Content-Disposition'] = 'attachment; filename="%s"' % f
         # This one is triggering http://bugs.python.org/issue20747, that is Python
         # will itself insert a newline in the header
-        h['Content-Disposition'] = 'attachement; filename="EdelRot_Blu\u0308te (3)-0.JPG"'
+        h['Content-Disposition'] = 'attachment; filename="EdelRot_Blu\u0308te (3)-0.JPG"'
 
     def test_newlines_in_headers(self):
         # Bug #10188: Do not allow newlines in headers (CR or LF)
@@ -442,6 +441,11 @@ class HttpResponseSubclassesTests(SimpleTestCase):
         r = HttpResponseRedirect(lazystr('/redirected/'))
         self.assertEqual(r.url, '/redirected/')
 
+    def test_redirect_repr(self):
+        response = HttpResponseRedirect('/redirected/')
+        expected = '<HttpResponseRedirect status_code=302, "text/html; charset=utf-8", url="/redirected/">'
+        self.assertEqual(repr(response), expected)
+
     def test_not_modified(self):
         response = HttpResponseNotModified()
         self.assertEqual(response.status_code, 304)
@@ -458,6 +462,11 @@ class HttpResponseSubclassesTests(SimpleTestCase):
             content='Only the GET method is allowed',
             content_type='text/html')
         self.assertContains(response, 'Only the GET method is allowed', status_code=405)
+
+    def test_not_allowed_repr(self):
+        response = HttpResponseNotAllowed(['GET', 'OPTIONS'], content_type='text/plain')
+        expected = '<HttpResponseNotAllowed [GET, OPTIONS] status_code=405, "text/plain">'
+        self.assertEqual(repr(response), expected)
 
 
 class JsonResponseTests(SimpleTestCase):
@@ -480,6 +489,11 @@ class JsonResponseTests(SimpleTestCase):
         response = JsonResponse(['foo', 'bar'], safe=False)
         self.assertEqual(json.loads(response.content.decode()), ['foo', 'bar'])
 
+    def test_json_response_uuid(self):
+        u = uuid.uuid4()
+        response = JsonResponse(u, safe=False)
+        self.assertEqual(json.loads(response.content.decode()), str(u))
+
     def test_json_response_custom_encoder(self):
         class CustomDjangoJSONEncoder(DjangoJSONEncoder):
             def encode(self, o):
@@ -487,6 +501,10 @@ class JsonResponseTests(SimpleTestCase):
 
         response = JsonResponse({}, encoder=CustomDjangoJSONEncoder)
         self.assertEqual(json.loads(response.content.decode()), {'foo': 'bar'})
+
+    def test_json_response_passing_arguments_to_json_dumps(self):
+        response = JsonResponse({'foo': 'bar'}, json_dumps_params={'indent': 2})
+        self.assertEqual(response.content.decode(), '{\n  "foo": "bar"\n}')
 
 
 class StreamingHttpResponseTests(SimpleTestCase):
@@ -570,18 +588,8 @@ class FileCloseTests(SimpleTestCase):
         # file isn't closed until we close the response.
         file1 = open(filename)
         r = HttpResponse(file1)
-        self.assertFalse(file1.closed)
-        r.close()
         self.assertTrue(file1.closed)
-
-        # don't automatically close file when we finish iterating the response.
-        file1 = open(filename)
-        r = HttpResponse(file1)
-        self.assertFalse(file1.closed)
-        list(r)
-        self.assertFalse(file1.closed)
         r.close()
-        self.assertTrue(file1.closed)
 
         # when multiple file are assigned as content, make sure they are all
         # closed with the response.
@@ -589,9 +597,6 @@ class FileCloseTests(SimpleTestCase):
         file2 = open(filename)
         r = HttpResponse(file1)
         r.content = file2
-        self.assertFalse(file1.closed)
-        self.assertFalse(file2.closed)
-        r.close()
         self.assertTrue(file1.closed)
         self.assertTrue(file2.closed)
 

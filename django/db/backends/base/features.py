@@ -208,6 +208,14 @@ class BaseDatabaseFeatures(object):
     # Does the backend support "select for update" queries with limit (and offset)?
     supports_select_for_update_with_limit = True
 
+    # Does the backend ignore null expressions in GREATEST and LEAST queries unless
+    # every expression is null?
+    greatest_least_ignores_nulls = False
+
+    # Can the backend clone databases for parallel test execution?
+    # Defaults to False to allow third-party backends to opt-in.
+    can_clone_databases = False
+
     def __init__(self, connection):
         self.connection = connection
 

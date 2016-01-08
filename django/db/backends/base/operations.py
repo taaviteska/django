@@ -8,7 +8,7 @@ from django.core.exceptions import ImproperlyConfigured
 from django.db.backends import utils
 from django.utils import six, timezone
 from django.utils.dateparse import parse_duration
-from django.utils.deprecation import RemovedInDjango21Warning
+from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_text
 
 
@@ -90,15 +90,6 @@ class BaseDatabaseOperations(object):
         """
         raise NotImplementedError('subclasses of BaseDatabaseOperations may require a datetrunc_sql() method')
 
-    def datetime_cast_sql(self):
-        """
-        Returns the SQL necessary to cast a datetime value so that it will be
-        retrieved as a Python datetime object instead of a string.
-
-        This SQL should include a '%s' in place of the field's name.
-        """
-        return "%s"
-
     def datetime_cast_date_sql(self, field_name, tzname):
         """
         Returns the SQL necessary to cast a datetime value to date value.
@@ -121,6 +112,13 @@ class BaseDatabaseOperations(object):
         a tuple of parameters.
         """
         raise NotImplementedError('subclasses of BaseDatabaseOperations may require a datetime_trunk_sql() method')
+
+    def time_extract_sql(self, lookup_type, field_name):
+        """
+        Given a lookup_type of 'hour', 'minute' or 'second', returns the SQL
+        that extracts a value from the given time field field_name.
+        """
+        return self.date_extract_sql(lookup_type, field_name)
 
     def deferrable_sql(self):
         """
@@ -552,7 +550,7 @@ class BaseDatabaseOperations(object):
         warnings.warn(
             "check_aggregate_support has been deprecated. Use "
             "check_expression_support instead.",
-            RemovedInDjango21Warning, stacklevel=2)
+            RemovedInDjango20Warning, stacklevel=2)
         return self.check_expression_support(aggregate_func)
 
     def check_expression_support(self, expression):
@@ -578,7 +576,7 @@ class BaseDatabaseOperations(object):
     def combine_duration_expression(self, connector, sub_expressions):
         return self.combine_expression(connector, sub_expressions)
 
-    def modify_insert_params(self, placeholders, params):
+    def modify_insert_params(self, placeholder, params):
         """Allow modification of insert parameters. Needed for Oracle Spatial
         backend due to #10888.
         """

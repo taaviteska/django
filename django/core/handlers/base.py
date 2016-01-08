@@ -7,14 +7,15 @@ import warnings
 
 from django import http
 from django.conf import settings
-from django.core import signals, urlresolvers
+from django.core import signals
 from django.core.exceptions import (
     MiddlewareNotUsed, PermissionDenied, SuspiciousOperation,
 )
 from django.db import connections, transaction
 from django.http.multipartparser import MultiPartParserError
+from django.urls import get_resolver, set_urlconf
 from django.utils import six
-from django.utils.deprecation import RemovedInDjango21Warning
+from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_text
 from django.utils.module_loading import import_string
 from django.views import debug
@@ -93,11 +94,11 @@ class BaseHandler(object):
             except TypeError:
                 warnings.warn(
                     "Error handlers should accept an exception parameter. Update "
-                    "your code as this parameter will be required in Django 2.1",
-                    RemovedInDjango21Warning, stacklevel=2
+                    "your code as this parameter will be required in Django 2.0",
+                    RemovedInDjango20Warning, stacklevel=2
                 )
                 response = callback(request, **param_dict)
-        except:
+        except Exception:
             signals.got_request_exception.send(sender=self.__class__, request=request)
             response = self.handle_uncaught_exception(request, resolver, sys.exc_info())
 
@@ -111,8 +112,11 @@ class BaseHandler(object):
         # variable" exception in the event an exception is raised before
         # resolver is set
         urlconf = settings.ROOT_URLCONF
-        urlresolvers.set_urlconf(urlconf)
-        resolver = urlresolvers.RegexURLResolver(r'^/', urlconf)
+        set_urlconf(urlconf)
+        resolver = get_resolver(urlconf)
+        # Use a flag to check if the response was rendered to prevent
+        # multiple renderings or to force rendering if necessary.
+        response_is_rendered = False
         try:
             response = None
             # Apply request middleware
@@ -123,10 +127,10 @@ class BaseHandler(object):
 
             if response is None:
                 if hasattr(request, 'urlconf'):
-                    # Reset url resolver with a custom urlconf.
+                    # Reset url resolver with a custom URLconf.
                     urlconf = request.urlconf
-                    urlresolvers.set_urlconf(urlconf)
-                    resolver = urlresolvers.RegexURLResolver(r'^/', urlconf)
+                    set_urlconf(urlconf)
+                    resolver = get_resolver(urlconf)
 
                 resolver_match = resolver.resolve(request.path_info)
                 callback, callback_args, callback_kwargs = resolver_match
@@ -143,15 +147,7 @@ class BaseHandler(object):
                 try:
                     response = wrapped_callback(request, *callback_args, **callback_kwargs)
                 except Exception as e:
-                    # If the view raised an exception, run it through exception
-                    # middleware, and if the exception middleware returns a
-                    # response, use that. Otherwise, reraise the exception.
-                    for middleware_method in self._exception_middleware:
-                        response = middleware_method(request, e)
-                        if response:
-                            break
-                    if response is None:
-                        raise
+                    response = self.process_exception_by_middleware(e, request)
 
             # Complain if the view returned None (a common error).
             if response is None:
@@ -173,7 +169,12 @@ class BaseHandler(object):
                             "%s.process_template_response didn't return an "
                             "HttpResponse object. It returned None instead."
                             % (middleware_method.__self__.__class__.__name__))
-                response = response.render()
+                try:
+                    response = response.render()
+                except Exception as e:
+                    response = self.process_exception_by_middleware(e, request)
+
+                response_is_rendered = True
 
         except http.Http404 as exc:
             logger.warning('Not Found: %s', request.path,
@@ -224,7 +225,7 @@ class BaseHandler(object):
             # Allow sys.exit() to actually exit. See tickets #1023 and #4701
             raise
 
-        except:  # Handle everything else.
+        except Exception:  # Handle everything else.
             # Get the exception info now, in case another exception is thrown later.
             signals.got_request_exception.send(sender=self.__class__, request=request)
             response = self.handle_uncaught_exception(request, resolver, sys.exc_info())
@@ -240,13 +241,29 @@ class BaseHandler(object):
                         "HttpResponse object. It returned None instead."
                         % (middleware_method.__self__.__class__.__name__))
             response = self.apply_response_fixes(request, response)
-        except:  # Any exception should be gathered and handled
+        except Exception:  # Any exception should be gathered and handled
             signals.got_request_exception.send(sender=self.__class__, request=request)
             response = self.handle_uncaught_exception(request, resolver, sys.exc_info())
 
         response._closable_objects.append(request)
 
+        # If the exception handler returns a TemplateResponse that has not
+        # been rendered, force it to be rendered.
+        if not response_is_rendered and callable(getattr(response, 'render', None)):
+            response = response.render()
+
         return response
+
+    def process_exception_by_middleware(self, exception, request):
+        """
+        Pass the exception to the exception middleware. If no middleware
+        return a response for this exception, raise it.
+        """
+        for middleware_method in self._exception_middleware:
+            response = middleware_method(request, exception)
+            if response:
+                return response
+        raise
 
     def handle_uncaught_exception(self, request, resolver, exc_info):
         """

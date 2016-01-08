@@ -208,7 +208,7 @@ class Apps(object):
                 warnings.warn(
                     "Model '%s.%s' was already registered. "
                     "Reloading models is not advised as it can lead to inconsistencies, "
-                    "most notably with related models." % (model_name, app_label),
+                    "most notably with related models." % (app_label, model_name),
                     RuntimeWarning, stacklevel=2)
             else:
                 raise RuntimeError(
@@ -259,6 +259,28 @@ class Apps(object):
             raise LookupError(
                 "Model '%s.%s' not registered." % (app_label, model_name))
         return model
+
+    @lru_cache.lru_cache(maxsize=None)
+    def get_swappable_settings_name(self, to_string):
+        """
+        For a given model string (e.g. "auth.User"), return the name of the
+        corresponding settings name if it refers to a swappable model. If the
+        referred model is not swappable, return None.
+
+        This method is decorated with lru_cache because it's performance
+        critical when it comes to migrations. Since the swappable settings don't
+        change after Django has loaded the settings, there is no reason to get
+        the respective settings attribute over and over again.
+        """
+        for model in self.get_models(include_swapped=True):
+            swapped = model._meta.swapped
+            # Is this model swapped out for the model given by to_string?
+            if swapped and swapped == to_string:
+                return model._meta.swappable
+            # Is this model swappable and the one given by to_string?
+            if model._meta.swappable and model._meta.label == to_string:
+                return model._meta.swappable
+        return None
 
     def set_available_apps(self, available):
         """
@@ -359,6 +381,10 @@ class Apps(object):
 
             def function(model):
                 next_function = partial(supplied_fn, model)
+                # Annotate the function with its field for retrieval in
+                # migrations.state.StateApps.
+                if getattr(supplied_fn, 'keywords', None):
+                    next_function.field = supplied_fn.keywords.get('field')
                 self.lazy_model_operation(next_function, *more_models)
 
         # If the model is already loaded, pass it to the function immediately.

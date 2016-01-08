@@ -30,6 +30,7 @@ from django.http import HttpResponse
 from django.test import (
     Client, RequestFactory, SimpleTestCase, TestCase, override_settings,
 )
+from django.urls import reverse_lazy
 
 from .views import get_view, post_view, trace_view
 
@@ -156,7 +157,9 @@ class ClientTest(TestCase):
 
     def test_raw_post(self):
         "POST raw data (with a content type) to a view"
-        test_doc = """<?xml version="1.0" encoding="utf-8"?><library><book><title>Blink</title><author>Malcolm Gladwell</author></book></library>"""
+        test_doc = """<?xml version="1.0" encoding="utf-8"?>
+        <library><book><title>Blink</title><author>Malcolm Gladwell</author></book></library>
+        """
         response = self.client.post("/raw_post_view/", test_doc,
                                     content_type="text/xml")
         self.assertEqual(response.status_code, 200)
@@ -364,6 +367,20 @@ class ClientTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['user'].username, 'testclient')
 
+    def test_view_with_force_login(self):
+        "Request a page that is protected with @login_required"
+        # Get the page without logging in. Should result in 302.
+        response = self.client.get('/login_protected_view/')
+        self.assertRedirects(response, '/accounts/login/?next=/login_protected_view/')
+
+        # Log in
+        self.client.force_login(self.u1)
+
+        # Request a page that requires a login
+        response = self.client.get('/login_protected_view/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['user'].username, 'testclient')
+
     def test_view_with_method_login(self):
         "Request a page that is protected with a @login_required method"
 
@@ -374,6 +391,20 @@ class ClientTest(TestCase):
         # Log in
         login = self.client.login(username='testclient', password='password')
         self.assertTrue(login, 'Could not log in')
+
+        # Request a page that requires a login
+        response = self.client.get('/login_protected_method_view/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['user'].username, 'testclient')
+
+    def test_view_with_method_force_login(self):
+        "Request a page that is protected with a @login_required method"
+        # Get the page without logging in. Should result in 302.
+        response = self.client.get('/login_protected_method_view/')
+        self.assertRedirects(response, '/accounts/login/?next=/login_protected_method_view/')
+
+        # Log in
+        self.client.force_login(self.u1)
 
         # Request a page that requires a login
         response = self.client.get('/login_protected_method_view/')
@@ -396,6 +427,23 @@ class ClientTest(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.context['user'].username, 'testclient')
 
+    def test_view_with_force_login_and_custom_redirect(self):
+        """
+        Request a page that is protected with
+        @login_required(redirect_field_name='redirect_to')
+        """
+        # Get the page without logging in. Should result in 302.
+        response = self.client.get('/login_protected_view_custom_redirect/')
+        self.assertRedirects(response, '/accounts/login/?redirect_to=/login_protected_view_custom_redirect/')
+
+        # Log in
+        self.client.force_login(self.u1)
+
+        # Request a page that requires a login
+        response = self.client.get('/login_protected_view_custom_redirect/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['user'].username, 'testclient')
+
     def test_view_with_bad_login(self):
         "Request a page that is protected with @login, but use bad credentials"
 
@@ -407,6 +455,21 @@ class ClientTest(TestCase):
 
         login = self.client.login(username='inactive', password='password')
         self.assertFalse(login)
+
+    def test_view_with_inactive_force_login(self):
+        "Request a page that is protected with @login, but use an inactive login"
+
+        # Get the page without logging in. Should result in 302.
+        response = self.client.get('/login_protected_view/')
+        self.assertRedirects(response, '/accounts/login/?next=/login_protected_view/')
+
+        # Log in
+        self.client.force_login(self.u2)
+
+        # Request a page that requires a login
+        response = self.client.get('/login_protected_view/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['user'].username, 'inactive')
 
     def test_logout(self):
         "Request a logout after logging in"
@@ -424,6 +487,46 @@ class ClientTest(TestCase):
         # Request a page that requires a login
         response = self.client.get('/login_protected_view/')
         self.assertRedirects(response, '/accounts/login/?next=/login_protected_view/')
+
+    def test_logout_with_force_login(self):
+        "Request a logout after logging in"
+        # Log in
+        self.client.force_login(self.u1)
+
+        # Request a page that requires a login
+        response = self.client.get('/login_protected_view/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['user'].username, 'testclient')
+
+        # Log out
+        self.client.logout()
+
+        # Request a page that requires a login
+        response = self.client.get('/login_protected_view/')
+        self.assertRedirects(response, '/accounts/login/?next=/login_protected_view/')
+
+    @override_settings(
+        AUTHENTICATION_BACKENDS=[
+            'django.contrib.auth.backends.ModelBackend',
+            'test_client.auth_backends.TestClientBackend',
+        ],
+    )
+    def test_force_login_with_backend(self):
+        """
+        Request a page that is protected with @login_required when using
+        force_login() and passing a backend.
+        """
+        # Get the page without logging in. Should result in 302.
+        response = self.client.get('/login_protected_view/')
+        self.assertRedirects(response, '/accounts/login/?next=/login_protected_view/')
+
+        # Log in
+        self.client.force_login(self.u1, backend='test_client.auth_backends.TestClientBackend')
+
+        # Request a page that requires a login
+        response = self.client.get('/login_protected_view/')
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.context['user'].username, 'testclient')
 
     @override_settings(SESSION_ENGINE="django.contrib.sessions.backends.signed_cookies")
     def test_logout_cookie_sessions(self):
@@ -520,6 +623,14 @@ class ClientTest(TestCase):
         self.assertEqual(mail.outbox[0].to[0], 'first@example.com')
         self.assertEqual(mail.outbox[0].to[1], 'second@example.com')
 
+    def test_reverse_lazy_decodes(self):
+        "Ensure reverse_lazy works in the test client"
+        data = {'var': 'data'}
+        response = self.client.get(reverse_lazy('get_view'), data)
+
+        # Check some response details
+        self.assertContains(response, 'This is a test')
+
     def test_mass_mail_sending(self):
         "Test that mass mail is redirected to a dummy outbox during test setup"
 
@@ -538,6 +649,14 @@ class ClientTest(TestCase):
         self.assertEqual(mail.outbox[1].from_email, 'from@example.com')
         self.assertEqual(mail.outbox[1].to[0], 'second@example.com')
         self.assertEqual(mail.outbox[1].to[1], 'third@example.com')
+
+    def test_exception_following_nested_client_request(self):
+        """
+        A nested test client request shouldn't clobber exception signals from
+        the outer client request.
+        """
+        with self.assertRaisesMessage(Exception, 'exception message'):
+            self.client.get('/nesting_exception_view/')
 
 
 @override_settings(
@@ -609,7 +728,6 @@ class RequestFactoryTest(SimpleTestCase):
         request = self.request_factory.get('/somewhere/')
         response = get_view(request)
 
-        self.assertEqual(response.status_code, 200)
         self.assertContains(response, 'This is a test')
 
     def test_trace_request_from_factory(self):
@@ -620,5 +738,4 @@ class RequestFactoryTest(SimpleTestCase):
         protocol = request.META["SERVER_PROTOCOL"]
         echoed_request_line = "TRACE {} {}".format(url_path, protocol)
 
-        self.assertEqual(response.status_code, 200)
         self.assertContains(response, echoed_request_line)

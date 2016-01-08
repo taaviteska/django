@@ -20,7 +20,7 @@ from django.utils import six, timezone
 from django.utils.dateparse import (
     parse_date, parse_datetime, parse_duration, parse_time,
 )
-from django.utils.deprecation import RemovedInDjango21Warning
+from django.utils.deprecation import RemovedInDjango20Warning
 from django.utils.encoding import force_text
 from django.utils.safestring import SafeBytes
 
@@ -51,13 +51,13 @@ IntegrityError = Database.IntegrityError
 
 
 def adapt_datetime_warn_on_aware_datetime(value):
-    # Remove this function and rely on the default adapter in Django 2.1.
+    # Remove this function and rely on the default adapter in Django 2.0.
     if settings.USE_TZ and timezone.is_aware(value):
         warnings.warn(
             "The SQLite database adapter received an aware datetime (%s), "
             "probably from cursor.execute(). Update your code to pass a "
             "naive datetime in the database connection's time zone (UTC by "
-            "default).", RemovedInDjango21Warning)
+            "default).", RemovedInDjango20Warning)
         # This doesn't account for the database connection's timezone,
         # which isn't known. (That's why this adapter is deprecated.)
         value = value.astimezone(timezone.utc).replace(tzinfo=None)
@@ -93,6 +93,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     # schema inspection is more useful.
     data_types = {
         'AutoField': 'integer',
+        'BigAutoField': 'integer',
         'BinaryField': 'BLOB',
         'BooleanField': 'bool',
         'CharField': 'varchar(%(max_length)s)',
@@ -120,6 +121,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
     }
     data_types_suffix = {
         'AutoField': 'AUTOINCREMENT',
+        'BigAutoField': 'AUTOINCREMENT',
     }
     # SQLite requires LIKE statements to include an ESCAPE clause if the value
     # being escaped has a percent or underscore in it.
@@ -210,6 +212,7 @@ class DatabaseWrapper(BaseDatabaseWrapper):
         conn.create_function("django_datetime_cast_date", 2, _sqlite_datetime_cast_date)
         conn.create_function("django_datetime_extract", 3, _sqlite_datetime_extract)
         conn.create_function("django_datetime_trunc", 3, _sqlite_datetime_trunc)
+        conn.create_function("django_time_extract", 2, _sqlite_time_extract)
         conn.create_function("regexp", 2, _sqlite_regexp)
         conn.create_function("django_format_dtdelta", 3, _sqlite_format_dtdelta)
         conn.create_function("django_power", 2, _sqlite_power)
@@ -400,6 +403,16 @@ def _sqlite_datetime_trunc(lookup_type, dt, tzname):
         return "%i-%02i-%02i %02i:%02i:00" % (dt.year, dt.month, dt.day, dt.hour, dt.minute)
     elif lookup_type == 'second':
         return "%i-%02i-%02i %02i:%02i:%02i" % (dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second)
+
+
+def _sqlite_time_extract(lookup_type, dt):
+    if dt is None:
+        return None
+    try:
+        dt = backend_utils.typecast_time(dt)
+    except (ValueError, TypeError):
+        return None
+    return getattr(dt, lookup_type)
 
 
 def _sqlite_format_dtdelta(conn, lhs, rhs):

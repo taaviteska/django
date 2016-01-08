@@ -11,6 +11,7 @@ from itertools import chain
 
 from django.conf import settings
 from django.forms.utils import flatatt, to_current_timezone
+from django.templatetags.static import static
 from django.utils import datetime_safe, formats, six
 from django.utils.datastructures import MultiValueDict
 from django.utils.dates import MONTHS
@@ -21,7 +22,6 @@ from django.utils.formats import get_format
 from django.utils.html import conditional_escape, format_html, html_safe
 from django.utils.safestring import mark_safe
 from django.utils.six.moves import range
-from django.utils.six.moves.urllib.parse import urljoin
 from django.utils.translation import ugettext_lazy
 
 __all__ = (
@@ -77,16 +77,15 @@ class Media(object):
             ) for path in self._css[medium]
         ] for medium in media])
 
-    def absolute_path(self, path, prefix=None):
+    def absolute_path(self, path):
+        """
+        Given a relative or absolute path to a static asset, return an absolute
+        path. An absolute path will be returned unchanged while a relative path
+        will be passed to django.templatetags.static.static().
+        """
         if path.startswith(('http://', 'https://', '/')):
             return path
-        if prefix is None:
-            if settings.STATIC_URL is None:
-                # backwards compatibility
-                prefix = settings.MEDIA_URL
-            else:
-                prefix = settings.STATIC_URL
-        return urljoin(prefix, path)
+        return static(path)
 
     def __getitem__(self, name):
         "Returns a Media object that only contains media of the given type"
@@ -378,14 +377,6 @@ class ClearableFileInput(FileInput):
         """
         Return whether value is considered to be initial value.
         """
-        # hasattr() masks exceptions on Python 2.
-        if six.PY2:
-            try:
-                getattr(value, 'url')
-            except AttributeError:
-                return False
-            else:
-                return bool(value)
         return bool(value and hasattr(value, 'url'))
 
     def get_template_substitution_values(self, value):
@@ -520,6 +511,13 @@ class Select(Widget):
         # multiple times. Thus, collapse it into a list so it can be consumed
         # more than once.
         self.choices = list(choices)
+
+    def __deepcopy__(self, memo):
+        obj = copy.copy(self)
+        obj.attrs = self.attrs.copy()
+        obj.choices = copy.copy(self.choices)
+        memo[id(self)] = obj
+        return obj
 
     def render(self, name, value, attrs=None, choices=()):
         if value is None:
@@ -714,10 +712,12 @@ class ChoiceFieldRenderer(object):
                 attrs_plus = self.attrs.copy()
                 if id_:
                     attrs_plus['id'] += '_{}'.format(i)
-                sub_ul_renderer = ChoiceFieldRenderer(name=self.name,
-                                                      value=self.value,
-                                                      attrs=attrs_plus,
-                                                      choices=choice_label)
+                sub_ul_renderer = self.__class__(
+                    name=self.name,
+                    value=self.value,
+                    attrs=attrs_plus,
+                    choices=choice_label,
+                )
                 sub_ul_renderer.choice_input_class = self.choice_input_class
                 output.append(format_html(self.inner_html, choice_value=choice_value,
                                           sub_widgets=sub_ul_renderer.render()))
@@ -926,6 +926,7 @@ class SelectDateWidget(Widget):
     month_field = '%s_month'
     day_field = '%s_day'
     year_field = '%s_year'
+    select_widget = Select
 
     date_re = re.compile(r'(\d{4})-(\d\d?)-(\d\d?)$')
 
@@ -1041,6 +1042,6 @@ class SelectDateWidget(Widget):
         if not self.is_required:
             choices.insert(0, none_value)
         local_attrs = self.build_attrs(id=field % id_)
-        s = Select(choices=choices)
+        s = self.select_widget(choices=choices)
         select_html = s.render(field % name, val, local_attrs)
         return select_html

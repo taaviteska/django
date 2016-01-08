@@ -7,9 +7,9 @@ circular import difficulties.
 """
 from __future__ import unicode_literals
 
+import inspect
 from collections import namedtuple
 
-from django.apps import apps
 from django.core.exceptions import FieldDoesNotExist
 from django.db.backends import utils
 from django.db.models.constants import LOOKUP_SEP
@@ -89,10 +89,8 @@ class Q(tree.Node):
     def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         # We must promote any new joins to left outer joins so that when Q is
         # used as an expression, rows aren't filtered due to joins.
-        joins_before = query.tables[:]
         clause, joins = query._add_q(self, reuse, allow_joins=allow_joins, split_subq=False)
-        joins_to_promote = [j for j in joins if j not in joins_before]
-        query.promote_joins(joins_to_promote)
+        query.promote_joins(joins)
         return clause
 
     @classmethod
@@ -123,7 +121,7 @@ class DeferredAttribute(object):
     def __init__(self, field_name, model):
         self.field_name = field_name
 
-    def __get__(self, instance, owner):
+    def __get__(self, instance, cls=None):
         """
         Retrieves and caches the value from the datastore on the first lookup.
         Returns the cached value.
@@ -169,6 +167,60 @@ class DeferredAttribute(object):
         if f.primary_key and f != link_field:
             return getattr(instance, link_field.attname)
         return None
+
+
+class RegisterLookupMixin(object):
+    def _get_lookup(self, lookup_name):
+        try:
+            return self.class_lookups[lookup_name]
+        except KeyError:
+            # To allow for inheritance, check parent class' class_lookups.
+            for parent in inspect.getmro(self.__class__):
+                if 'class_lookups' not in parent.__dict__:
+                    continue
+                if lookup_name in parent.class_lookups:
+                    return parent.class_lookups[lookup_name]
+        except AttributeError:
+            # This class didn't have any class_lookups
+            pass
+        return None
+
+    def get_lookup(self, lookup_name):
+        from django.db.models.lookups import Lookup
+        found = self._get_lookup(lookup_name)
+        if found is None and hasattr(self, 'output_field'):
+            return self.output_field.get_lookup(lookup_name)
+        if found is not None and not issubclass(found, Lookup):
+            return None
+        return found
+
+    def get_transform(self, lookup_name):
+        from django.db.models.lookups import Transform
+        found = self._get_lookup(lookup_name)
+        if found is None and hasattr(self, 'output_field'):
+            return self.output_field.get_transform(lookup_name)
+        if found is not None and not issubclass(found, Transform):
+            return None
+        return found
+
+    @classmethod
+    def register_lookup(cls, lookup, lookup_name=None):
+        if lookup_name is None:
+            lookup_name = lookup.lookup_name
+        if 'class_lookups' not in cls.__dict__:
+            cls.class_lookups = {}
+        cls.class_lookups[lookup_name] = lookup
+        return lookup
+
+    @classmethod
+    def _unregister_lookup(cls, lookup, lookup_name=None):
+        """
+        Remove given lookup from cls lookups. For use in tests only as it's
+        not thread-safe.
+        """
+        if lookup_name is None:
+            lookup_name = lookup.lookup_name
+        del cls.class_lookups[lookup_name]
 
 
 def select_related_descend(field, restricted, requested, load_fields, reverse=False):
@@ -219,12 +271,13 @@ def deferred_class_factory(model, attrs):
     """
     if not attrs:
         return model
+    opts = model._meta
     # Never create deferred models based on deferred model
     if model._deferred:
         # Deferred models are proxies for the non-deferred model. We never
         # create chains of defers => proxy_for_model is the non-deferred
         # model.
-        model = model._meta.proxy_for_model
+        model = opts.proxy_for_model
     # The app registry wants a unique name for each model, otherwise the new
     # class won't be created (we get an exception). Therefore, we generate
     # the name using the passed in attrs. It's OK to reuse an existing class
@@ -233,24 +286,20 @@ def deferred_class_factory(model, attrs):
     name = utils.truncate_name(name, 80, 32)
 
     try:
-        return apps.get_model(model._meta.app_label, name)
+        return opts.apps.get_model(model._meta.app_label, name)
 
     except LookupError:
 
         class Meta:
             proxy = True
-            app_label = model._meta.app_label
+            apps = opts.apps
+            app_label = opts.app_label
 
         overrides = {attr: DeferredAttribute(attr, model) for attr in attrs}
         overrides["Meta"] = Meta
         overrides["__module__"] = model.__module__
         overrides["_deferred"] = True
         return type(str(name), (model,), overrides)
-
-
-# The above function is also used to unpickle model instances with deferred
-# fields.
-deferred_class_factory.__safe_for_unpickling__ = True
 
 
 def refs_aggregate(lookup_parts, aggregates):
@@ -279,3 +328,31 @@ def refs_expression(lookup_parts, annotations):
         if level_n_lookup in annotations and annotations[level_n_lookup]:
             return annotations[level_n_lookup], lookup_parts[n:]
     return False, ()
+
+
+def check_rel_lookup_compatibility(model, target_opts, field):
+    """
+    Check that self.model is compatible with target_opts. Compatibility
+    is OK if:
+      1) model and opts match (where proxy inheritance is removed)
+      2) model is parent of opts' model or the other way around
+    """
+    def check(opts):
+        return (
+            model._meta.concrete_model == opts.concrete_model or
+            opts.concrete_model in model._meta.get_parent_list() or
+            model in opts.get_parent_list()
+        )
+    # If the field is a primary key, then doing a query against the field's
+    # model is ok, too. Consider the case:
+    # class Restaurant(models.Model):
+    #     place = OnetoOneField(Place, primary_key=True):
+    # Restaurant.objects.filter(pk__in=Restaurant.objects.all()).
+    # If we didn't have the primary key check, then pk__in (== place__in) would
+    # give Place's opts as the target opts, but Restaurant isn't compatible
+    # with that. This logic applies only to primary keys, as when doing __in=qs,
+    # we are going to turn this into __in=qs.values('pk') later on.
+    return (
+        check(target_opts) or
+        (getattr(field, 'primary_key', False) and check(field.model._meta))
+    )

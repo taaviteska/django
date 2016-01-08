@@ -2,10 +2,21 @@ import os
 from unittest import SkipTest
 
 from django.contrib.staticfiles.testing import StaticLiveServerTestCase
+from django.test import modify_settings
 from django.utils.module_loading import import_string
 from django.utils.translation import ugettext as _
 
 
+class CSPMiddleware(object):
+    """The admin's JavaScript should be compatible with CSP."""
+    def process_response(self, request, response):
+        response['Content-Security-Policy'] = "default-src 'self'"
+        return response
+
+
+@modify_settings(
+    MIDDLEWARE_CLASSES={'append': 'django.contrib.admin.tests.CSPMiddleware'},
+)
 class AdminSeleniumWebDriverTestCase(StaticLiveServerTestCase):
 
     available_apps = [
@@ -44,6 +55,13 @@ class AdminSeleniumWebDriverTestCase(StaticLiveServerTestCase):
         """
         from selenium.webdriver.support.wait import WebDriverWait
         WebDriverWait(self.selenium, timeout).until(callback)
+
+    def wait_for_popup(self, num_windows=2, timeout=10):
+        """
+        Block until `num_windows` are present (usually 2, but can be
+        overridden in the case of pop-ups opening other pop-ups).
+        """
+        self.wait_until(lambda d: len(d.window_handles) == num_windows, timeout)
 
     def wait_loaded_tag(self, tag_name, timeout=10):
         """

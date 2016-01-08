@@ -20,7 +20,7 @@ from django.core.cache import (
     DEFAULT_CACHE_ALIAS, CacheKeyWarning, cache, caches,
 )
 from django.core.cache.utils import make_template_fragment_key
-from django.db import connection, connections, transaction
+from django.db import connection, connections
 from django.http import HttpRequest, HttpResponse, StreamingHttpResponse
 from django.middleware.cache import (
     CacheMiddleware, FetchFromCacheMiddleware, UpdateCacheMiddleware,
@@ -60,9 +60,14 @@ class C:
         return 24
 
 
-class Unpickable(object):
+class Unpicklable(object):
     def __getstate__(self):
         raise pickle.PickleError()
+
+
+class UnpicklableType(object):
+    # Unpicklable using the default pickling protocol on Python 2.
+    __slots__ = 'a',
 
 
 @override_settings(CACHES={
@@ -196,6 +201,15 @@ class DummyCacheTests(SimpleTestCase):
         cache.set('answer', 42)
         self.assertRaises(ValueError, cache.decr_version, 'answer')
         self.assertRaises(ValueError, cache.decr_version, 'does_not_exist')
+
+    def test_get_or_set(self):
+        self.assertEqual(cache.get_or_set('mykey', 'default'), 'default')
+
+    def test_get_or_set_callable(self):
+        def my_callable():
+            return 'default'
+
+        self.assertEqual(cache.get_or_set('mykey', my_callable), 'default')
 
 
 def custom_key_func(key, key_prefix, version):
@@ -548,7 +562,6 @@ class BaseCacheTests(object):
         keys that would be refused by memcached. This encourages portable
         caching code without making it too difficult to use production backends
         with more liberal key rules. Refs #6447.
-
         """
         # mimic custom ``make_key`` method being defined since the default will
         # never show the below warnings
@@ -845,7 +858,7 @@ class BaseCacheTests(object):
         self.assertEqual(caches['custom_key'].get('answer2'), 42)
         self.assertEqual(caches['custom_key2'].get('answer2'), 42)
 
-    def test_cache_write_unpickable_object(self):
+    def test_cache_write_unpicklable_object(self):
         update_middleware = UpdateCacheMiddleware()
         update_middleware.cache = cache
 
@@ -876,14 +889,13 @@ class BaseCacheTests(object):
         self.assertEqual(get_cache_data.cookies, response.cookies)
 
     def test_add_fail_on_pickleerror(self):
-        "See https://code.djangoproject.com/ticket/21200"
+        # Shouldn't fail silently if trying to cache an unpicklable type.
         with self.assertRaises(pickle.PickleError):
-            cache.add('unpickable', Unpickable())
+            cache.add('unpicklable', Unpicklable())
 
     def test_set_fail_on_pickleerror(self):
-        "See https://code.djangoproject.com/ticket/21200"
         with self.assertRaises(pickle.PickleError):
-            cache.set('unpickable', Unpickable())
+            cache.set('unpicklable', Unpicklable())
 
     def test_get_or_set(self):
         self.assertIsNone(cache.get('projector'))
@@ -970,13 +982,6 @@ class DBCacheTests(BaseCacheTests, TransactionTestCase):
         )
         self.assertEqual(out.getvalue(),
             "Cache table 'test cache table' created.\n")
-
-    def test_clear_commits_transaction(self):
-        # Ensure the database transaction is committed (#19896)
-        cache.set("key1", "spam")
-        cache.clear()
-        transaction.rollback()
-        self.assertIsNone(cache.get("key1"))
 
 
 @override_settings(USE_TZ=True)
@@ -1131,7 +1136,6 @@ class MemcachedCacheTests(BaseCacheTests, TestCase):
 
         In order to be memcached-API-library agnostic, we only assert
         that a generic exception of some kind is raised.
-
         """
         # memcached does not allow whitespace or control characters in keys
         self.assertRaises(Exception, cache.set, 'key with spaces', 'value')
@@ -1230,6 +1234,10 @@ class FileBasedCacheTests(BaseCacheTests, TestCase):
         cache.set('foo', 'bar')
         os.path.exists(self.dirname)
 
+    def test_cache_write_unpicklable_type(self):
+        # This fails if not using the highest pickling protocol on Python 2.
+        cache.set('unpicklable', UnpicklableType())
+
 
 @override_settings(CACHES={
     'default': {
@@ -1241,7 +1249,6 @@ class CustomCacheKeyValidationTests(SimpleTestCase):
     Tests for the ability to mixin a custom ``validate_key`` method to
     a custom cache backend that otherwise inherits from a builtin
     backend, and override the default key validation. Refs #6447.
-
     """
     def test_custom_key_validation(self):
         # this key is both longer than 250 characters, and has spaces
@@ -1458,6 +1465,7 @@ class CacheUtils(SimpleTestCase):
         tests = (
             # Initial Cache-Control, kwargs to patch_cache_control, expected Cache-Control parts
             (None, {'private': True}, {'private'}),
+            ('', {'private': True}, {'private'}),
 
             # Test whether private/public attributes are mutually exclusive
             ('private', {'private': True}, {'private'}),
@@ -1854,7 +1862,8 @@ class CacheMiddlewareTest(SimpleTestCase):
 
         self.assertEqual(as_view_decorator.cache_timeout, 30)  # Timeout value for 'default' cache, i.e. 30
         self.assertEqual(as_view_decorator.key_prefix, '')
-        self.assertEqual(as_view_decorator.cache_alias, 'default')  # Value of DEFAULT_CACHE_ALIAS from django.core.cache
+        # Value of DEFAULT_CACHE_ALIAS from django.core.cache
+        self.assertEqual(as_view_decorator.cache_alias, 'default')
 
         # Next, test with custom values:
         as_view_decorator_with_custom = CacheMiddleware(cache_timeout=60, cache_alias='other', key_prefix='foo')

@@ -245,7 +245,7 @@ WHEN (new.%(col_name)s IS NULL)
         # http://cx-oracle.sourceforge.net/html/cursor.html#Cursor.statement
         # The DB API definition does not define this attribute.
         statement = cursor.statement
-        if statement and six.PY2 and not isinstance(statement, unicode):
+        if statement and six.PY2 and not isinstance(statement, unicode):  # NOQA: unicode undefined on PY3
             statement = statement.decode('utf-8')
         # Unlike Psycopg's `query` and MySQLdb`'s `_last_executed`, CxOracle's
         # `statement` doesn't contain the query parameters. refs #20010.
@@ -266,6 +266,9 @@ WHEN (new.%(col_name)s IS NULL)
 
     def max_name_length(self):
         return 30
+
+    def pk_default_value(self):
+        return "NULL"
 
     def prep_for_iexact_query(self, x):
         return x
@@ -439,6 +442,8 @@ WHEN (new.%(col_name)s IS NULL)
         name_length = self.max_name_length() - 3
         return '%s_TR' % truncate_name(table, name_length).upper()
 
-    def bulk_insert_sql(self, fields, num_values):
-        items_sql = "SELECT %s FROM DUAL" % ", ".join(["%s"] * len(fields))
-        return " UNION ALL ".join([items_sql] * num_values)
+    def bulk_insert_sql(self, fields, placeholder_rows):
+        return " UNION ALL ".join(
+            "SELECT %s FROM DUAL" % ", ".join(row)
+            for row in placeholder_rows
+        )

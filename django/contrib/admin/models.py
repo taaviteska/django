@@ -3,8 +3,9 @@ from __future__ import unicode_literals
 from django.conf import settings
 from django.contrib.admin.utils import quote
 from django.contrib.contenttypes.models import ContentType
-from django.core.urlresolvers import NoReverseMatch, reverse
 from django.db import models
+from django.urls import NoReverseMatch, reverse
+from django.utils import timezone
 from django.utils.encoding import python_2_unicode_compatible, smart_text
 from django.utils.translation import ugettext, ugettext_lazy as _
 
@@ -17,19 +18,36 @@ class LogEntryManager(models.Manager):
     use_in_migrations = True
 
     def log_action(self, user_id, content_type_id, object_id, object_repr, action_flag, change_message=''):
-        e = self.model(
-            None, None, user_id, content_type_id, smart_text(object_id),
-            object_repr[:200], action_flag, change_message
+        self.model.objects.create(
+            user_id=user_id,
+            content_type_id=content_type_id,
+            object_id=smart_text(object_id),
+            object_repr=object_repr[:200],
+            action_flag=action_flag,
+            change_message=change_message,
         )
-        e.save()
 
 
 @python_2_unicode_compatible
 class LogEntry(models.Model):
-    action_time = models.DateTimeField(_('action time'), auto_now=True)
-    user = models.ForeignKey(settings.AUTH_USER_MODEL)
-    content_type = models.ForeignKey(ContentType, blank=True, null=True)
+    action_time = models.DateTimeField(
+        _('action time'),
+        default=timezone.now,
+        editable=False,
+    )
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        models.CASCADE,
+        verbose_name=_('user'),
+    )
+    content_type = models.ForeignKey(
+        ContentType,
+        models.SET_NULL,
+        verbose_name=_('content type'),
+        blank=True, null=True,
+    )
     object_id = models.TextField(_('object id'), blank=True, null=True)
+    # Translators: 'repr' means representation (https://docs.python.org/3/library/functions.html#repr)
     object_repr = models.CharField(_('object repr'), max_length=200)
     action_flag = models.PositiveSmallIntegerField(_('action flag'))
     change_message = models.TextField(_('change message'), blank=True)

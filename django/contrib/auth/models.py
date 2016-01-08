@@ -59,7 +59,11 @@ class Permission(models.Model):
     created for each Django model.
     """
     name = models.CharField(_('name'), max_length=255)
-    content_type = models.ForeignKey(ContentType)
+    content_type = models.ForeignKey(
+        ContentType,
+        models.CASCADE,
+        verbose_name=_('content type'),
+    )
     codename = models.CharField(_('codename'), max_length=100)
     objects = PermissionManager()
 
@@ -132,28 +136,33 @@ class Group(models.Model):
 class UserManager(BaseUserManager):
     use_in_migrations = True
 
-    def _create_user(self, username, email, password,
-                     is_staff, is_superuser, **extra_fields):
+    def _create_user(self, username, email, password, **extra_fields):
         """
         Creates and saves a User with the given username, email and password.
         """
         if not username:
             raise ValueError('The given username must be set')
         email = self.normalize_email(email)
-        user = self.model(username=username, email=email,
-                          is_staff=is_staff, is_superuser=is_superuser,
-                          **extra_fields)
+        user = self.model(username=username, email=email, **extra_fields)
         user.set_password(password)
         user.save(using=self._db)
         return user
 
     def create_user(self, username, email=None, password=None, **extra_fields):
-        return self._create_user(username, email, password, False, False,
-                                 **extra_fields)
+        extra_fields.setdefault('is_staff', False)
+        extra_fields.setdefault('is_superuser', False)
+        return self._create_user(username, email, password, **extra_fields)
 
     def create_superuser(self, username, email, password, **extra_fields):
-        return self._create_user(username, email, password, True, True,
-                                 **extra_fields)
+        extra_fields.setdefault('is_staff', True)
+        extra_fields.setdefault('is_superuser', True)
+
+        if extra_fields.get('is_staff') is not True:
+            raise ValueError('Superuser must have is_staff=True.')
+        if extra_fields.get('is_superuser') is not True:
+            raise ValueError('Superuser must have is_superuser=True.')
+
+        return self._create_user(username, email, password, **extra_fields)
 
 
 # A few helper functions for common logic between User and AnonymousUser.
@@ -290,13 +299,13 @@ class AbstractUser(AbstractBaseUser, PermissionsMixin):
     An abstract base class implementing a fully featured User model with
     admin-compliant permissions.
 
-    Username, password and email are required. Other fields are optional.
+    Username and password are required. Other fields are optional.
     """
     username = models.CharField(
         _('username'),
-        max_length=30,
+        max_length=254,
         unique=True,
-        help_text=_('Required. 30 characters or fewer. Letters, digits and @/./+/-/_ only.'),
+        help_text=_('Required. 254 characters or fewer. Letters, digits and @/./+/-/_ only.'),
         validators=[
             validators.RegexValidator(
                 r'^[\w.@+-]+$',

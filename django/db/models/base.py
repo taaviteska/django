@@ -18,7 +18,7 @@ from django.db import (
 )
 from django.db.models import signals
 from django.db.models.constants import LOOKUP_SEP
-from django.db.models.deletion import Collector
+from django.db.models.deletion import CASCADE, Collector
 from django.db.models.fields import AutoField
 from django.db.models.fields.related import (
     ForeignObjectRel, ManyToOneRel, OneToOneField, lazy_related_operation,
@@ -98,9 +98,9 @@ class ModelBase(type):
                 if not abstract:
                     raise RuntimeError(
                         "Model class %s.%s doesn't declare an explicit "
-                        "app_label and either isn't in an application in "
-                        "INSTALLED_APPS or else was imported before its "
-                        "application was loaded. " % (module, name))
+                        "app_label and isn't in an application in "
+                        "INSTALLED_APPS." % (module, name)
+                    )
 
             else:
                 app_label = app_config.label
@@ -185,7 +185,6 @@ class ModelBase(type):
                 raise TypeError("Proxy model '%s' has no non-abstract model base class." % name)
             new_class._meta.setup_proxy(base)
             new_class._meta.concrete_model = base._meta.concrete_model
-            base._meta.concrete_model._meta.proxied_children.append(new_class._meta)
         else:
             new_class._meta.concrete_model = new_class
 
@@ -230,8 +229,13 @@ class ModelBase(type):
                     field = parent_links[base_key]
                 elif not is_proxy:
                     attr_name = '%s_ptr' % base._meta.model_name
-                    field = OneToOneField(base, name=attr_name,
-                            auto_created=True, parent_link=True)
+                    field = OneToOneField(
+                        base,
+                        on_delete=CASCADE,
+                        name=attr_name,
+                        auto_created=True,
+                        parent_link=True,
+                    )
                     # Only add the ptr field if it's not already present;
                     # e.g. migrations will already have it specified
                     if not hasattr(new_class, attr_name):
@@ -306,21 +310,15 @@ class ModelBase(type):
             cls.get_next_in_order = curry(cls._get_next_or_previous_in_order, is_next=True)
             cls.get_previous_in_order = curry(cls._get_next_or_previous_in_order, is_next=False)
 
-            # defer creating accessors on the foreign class until we are
-            # certain it has been created
-            def make_foreign_order_accessors(cls, model, field):
-                setattr(
-                    field.remote_field.model,
-                    'get_%s_order' % cls.__name__.lower(),
-                    curry(method_get_order, cls)
-                )
-                setattr(
-                    field.remote_field.model,
-                    'set_%s_order' % cls.__name__.lower(),
-                    curry(method_set_order, cls)
-                )
-            wrt = opts.order_with_respect_to
-            lazy_related_operation(make_foreign_order_accessors, cls, wrt.remote_field.model, field=wrt)
+            # Defer creating accessors on the foreign class until it has been
+            # created and registered. If remote_field is None, we're ordering
+            # with respect to a GenericForeignKey and don't know what the
+            # foreign class is - we'll add those accessors later in
+            # contribute_to_class().
+            if opts.order_with_respect_to.remote_field:
+                wrt = opts.order_with_respect_to
+                remote = wrt.remote_field.model
+                lazy_related_operation(make_foreign_order_accessors, cls, remote)
 
         # Give the class a docstring -- its definition.
         if cls.__doc__ is None:
@@ -465,7 +463,7 @@ class Model(six.with_metaclass(ModelBase)):
     def __str__(self):
         if six.PY2 and hasattr(self, '__unicode__'):
             return force_text(self).encode('utf-8')
-        return '%s object' % self.__class__.__name__
+        return str('%s object' % self.__class__.__name__)
 
     def __eq__(self, other):
         if not isinstance(other, Model):
@@ -594,7 +592,7 @@ class Model(six.with_metaclass(ModelBase)):
                 rel_instance = getattr(self, field.get_cache_name())
                 local_val = getattr(db_instance, field.attname)
                 related_val = None if rel_instance is None else getattr(rel_instance, field.target_field.attname)
-                if local_val != related_val:
+                if local_val != related_val or (local_val is None and related_val is None):
                     del self.__dict__[field.get_cache_name()]
         self._state.db = db_instance._state.db
 
@@ -625,6 +623,33 @@ class Model(six.with_metaclass(ModelBase)):
         that the "save" must be an SQL insert or update (or equivalent for
         non-SQL backends), respectively. Normally, they should not be set.
         """
+        # Ensure that a model instance without a PK hasn't been assigned to
+        # a ForeignKey or OneToOneField on this model. If the field is
+        # nullable, allowing the save() would result in silent data loss.
+        for field in self._meta.concrete_fields:
+            if field.is_relation:
+                # If the related field isn't cached, then an instance hasn't
+                # been assigned and there's no need to worry about this check.
+                try:
+                    getattr(self, field.get_cache_name())
+                except AttributeError:
+                    continue
+                obj = getattr(self, field.name, None)
+                # A pk may have been assigned manually to a model instance not
+                # saved to the database (or auto-generated in a case like
+                # UUIDField), but we allow the save to proceed and rely on the
+                # database to raise an IntegrityError if applicable. If
+                # constraints aren't supported by the database, there's the
+                # unavoidable risk of data corruption.
+                if obj and obj.pk is None:
+                    # Remove the object from a related instance cache.
+                    if not field.remote_field.multiple:
+                        delattr(obj, field.remote_field.get_cache_name())
+                    raise ValueError(
+                        "save() prohibited to prevent data loss due to "
+                        "unsaved related object '%s'." % field.name
+                    )
+
         using = using or router.db_for_write(self.__class__, instance=self)
         if force_insert and (force_update or update_fields):
             raise ValueError("Cannot force both insert and updating in model saving.")
@@ -774,8 +799,8 @@ class Model(six.with_metaclass(ModelBase)):
                 # If this is a model with an order_with_respect_to
                 # autopopulate the _order field
                 field = meta.order_with_respect_to
-                order_value = cls._base_manager.using(using).filter(
-                    **{field.name: getattr(self, field.attname)}).count()
+                filter_args = field.get_filter_kwargs_for_object(self)
+                order_value = cls._base_manager.using(using).filter(**filter_args).count()
                 self._order = order_value
 
             fields = meta.local_concrete_fields
@@ -863,9 +888,8 @@ class Model(six.with_metaclass(ModelBase)):
             op = 'gt' if is_next else 'lt'
             order = '_order' if is_next else '-_order'
             order_field = self._meta.order_with_respect_to
-            obj = self._default_manager.filter(**{
-                order_field.name: getattr(self, order_field.attname)
-            }).filter(**{
+            filter_args = order_field.get_filter_kwargs_for_object(self)
+            obj = self._default_manager.filter(**filter_args).filter(**{
                 '_order__%s' % op: self._default_manager.values('_order').filter(**{
                     self._meta.pk.name: self.pk
                 })
@@ -1305,7 +1329,13 @@ class Model(six.with_metaclass(ModelBase)):
                 used_fields[f.attname] = f
 
         # Check that fields defined in the model don't clash with fields from
-        # parents.
+        # parents, including auto-generated fields like multi-table inheritance
+        # child accessors.
+        for parent in cls._meta.get_parent_list():
+            for f in parent._meta.get_fields():
+                if f not in used_fields:
+                    used_fields[f.name] = f
+
         for f in cls._meta.local_fields:
             clash = used_fields.get(f.name) or used_fields.get(f.attname) or None
             # Note that we may detect clash between user-defined non-unique
@@ -1618,22 +1648,33 @@ class Model(six.with_metaclass(ModelBase)):
 def method_set_order(ordered_obj, self, id_list, using=None):
     if using is None:
         using = DEFAULT_DB_ALIAS
-    rel_val = getattr(self, ordered_obj._meta.order_with_respect_to.remote_field.field_name)
-    order_name = ordered_obj._meta.order_with_respect_to.name
+    order_wrt = ordered_obj._meta.order_with_respect_to
+    filter_args = order_wrt.get_forward_related_filter(self)
     # FIXME: It would be nice if there was an "update many" version of update
     # for situations like this.
     with transaction.atomic(using=using, savepoint=False):
         for i, j in enumerate(id_list):
-            ordered_obj.objects.filter(**{'pk': j, order_name: rel_val}).update(_order=i)
+            ordered_obj.objects.filter(pk=j, **filter_args).update(_order=i)
 
 
 def method_get_order(ordered_obj, self):
-    rel_val = getattr(self, ordered_obj._meta.order_with_respect_to.remote_field.field_name)
-    order_name = ordered_obj._meta.order_with_respect_to.name
+    order_wrt = ordered_obj._meta.order_with_respect_to
+    filter_args = order_wrt.get_forward_related_filter(self)
     pk_name = ordered_obj._meta.pk.name
-    return [r[pk_name] for r in
-            ordered_obj.objects.filter(**{order_name: rel_val}).values(pk_name)]
+    return ordered_obj.objects.filter(**filter_args).values_list(pk_name, flat=True)
 
+
+def make_foreign_order_accessors(model, related_model):
+    setattr(
+        related_model,
+        'get_%s_order' % model.__name__.lower(),
+        curry(method_get_order, model)
+    )
+    setattr(
+        related_model,
+        'set_%s_order' % model.__name__.lower(),
+        curry(method_set_order, model)
+    )
 
 ########
 # MISC #

@@ -9,6 +9,7 @@ import os
 import shutil
 import tempfile as sys_tempfile
 import unittest
+from io import BytesIO
 
 from django.core.files import temp as tempfile
 from django.core.files.uploadedfile import SimpleUploadedFile
@@ -16,7 +17,7 @@ from django.http.multipartparser import MultiPartParser, parse_header
 from django.test import SimpleTestCase, TestCase, client, override_settings
 from django.utils.encoding import force_bytes
 from django.utils.http import urlquote
-from django.utils.six import PY2, BytesIO, StringIO
+from django.utils.six import PY2, StringIO
 
 from . import uploadhandler
 from .models import FileModel
@@ -155,14 +156,18 @@ class FileUploadTests(TestCase):
         (#22971).
         """
         payload = client.FakePayload()
-        payload.write('\r\n'.join([
-            '--' + client.BOUNDARY,
-            'Content-Disposition: form-data; name*=UTF-8\'\'file_unicode; filename*=UTF-8\'\'%s' % urlquote(UNICODE_FILENAME),
-            'Content-Type: application/octet-stream',
-            '',
-            'You got pwnd.\r\n',
-            '\r\n--' + client.BOUNDARY + '--\r\n'
-        ]))
+        payload.write(
+            '\r\n'.join([
+                '--' + client.BOUNDARY,
+                'Content-Disposition: form-data; name*=UTF-8\'\'file_unicode; filename*=UTF-8\'\'%s' % urlquote(
+                    UNICODE_FILENAME
+                ),
+                'Content-Type: application/octet-stream',
+                '',
+                'You got pwnd.\r\n',
+                '\r\n--' + client.BOUNDARY + '--\r\n'
+            ])
+        )
 
         r = {
             'CONTENT_LENGTH': len(payload),

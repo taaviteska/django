@@ -70,7 +70,7 @@ pull request "Merged in XXXXXXX" (replacing with the commit hash) after you
 merge it. Trac checks for this message format to indicate on the ticket page
 whether or not a pull request is merged.
 
-Avoid using GitHub's "Merge pull request" button on the Web site as its creates
+Avoid using GitHub's "Merge pull request" button on the website as it creates
 an ugly "merge commit" and makes navigating history more difficult.
 
 When rewriting the commit history of a pull request, the goal is to make
@@ -176,7 +176,7 @@ Django's Git repository:
     commit message, GitHub will close the pull request, but the Trac plugin
     will also close the same numbered ticket in Trac.
 
-.. _Trac plugin: https://github.com/aaugustin/trac-github
+.. _Trac plugin: https://github.com/trac-hacks/trac-github
 
 * If your commit references a ticket in the Django `ticket tracker`_ but
   does *not* close the ticket, include the phrase "Refs #xxxxx", where "xxxxx"

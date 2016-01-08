@@ -35,17 +35,19 @@ class DatabaseOperations(BaseDatabaseOperations):
         bad_fields = (fields.DateField, fields.DateTimeField, fields.TimeField)
         bad_aggregates = (aggregates.Sum, aggregates.Avg, aggregates.Variance, aggregates.StdDev)
         if isinstance(expression, bad_aggregates):
-            try:
-                output_field = expression.input_field.output_field
-                if isinstance(output_field, bad_fields):
-                    raise NotImplementedError(
-                        'You cannot use Sum, Avg, StdDev and Variance aggregations '
-                        'on date/time fields in sqlite3 '
-                        'since date/time is saved as text.')
-            except FieldError:
-                # not every sub-expression has an output_field which is fine to
-                # ignore
-                pass
+            for expr in expression.get_source_expressions():
+                try:
+                    output_field = expr.output_field
+                    if isinstance(output_field, bad_fields):
+                        raise NotImplementedError(
+                            'You cannot use Sum, Avg, StdDev, and Variance '
+                            'aggregations on date/time fields in sqlite3 '
+                            'since date/time is saved as text.'
+                        )
+                except FieldError:
+                    # Not every subexpression has an output_field which is fine
+                    # to ignore.
+                    pass
 
     def date_extract_sql(self, lookup_type, field_name):
         # sqlite doesn't support extract, so we fake it with the user-defined
@@ -88,11 +90,51 @@ class DatabaseOperations(BaseDatabaseOperations):
         return "django_datetime_trunc('%s', %s, %%s)" % (
             lookup_type.lower(), field_name), [tzname]
 
+    def time_extract_sql(self, lookup_type, field_name):
+        # sqlite doesn't support extract, so we fake it with the user-defined
+        # function django_time_extract that's registered in connect(). Note that
+        # single quotes are used because this is a string (and could otherwise
+        # cause a collision with a field name).
+        return "django_time_extract('%s', %s)" % (lookup_type.lower(), field_name)
+
     def drop_foreignkey_sql(self):
         return ""
 
     def pk_default_value(self):
         return "NULL"
+
+    def _quote_params_for_last_executed_query(self, params):
+        """
+        Only for last_executed_query! Don't use this to execute SQL queries!
+        """
+        sql = 'SELECT ' + ', '.join(['QUOTE(?)'] * len(params))
+        # Bypass Django's wrappers and use the underlying sqlite3 connection
+        # to avoid logging this query - it would trigger infinite recursion.
+        cursor = self.connection.connection.cursor()
+        # Native sqlite3 cursors cannot be used as context managers.
+        try:
+            return cursor.execute(sql, params).fetchone()
+        finally:
+            cursor.close()
+
+    def last_executed_query(self, cursor, sql, params):
+        # Python substitutes parameters in Modules/_sqlite/cursor.c with:
+        # pysqlite_statement_bind_parameters(self->statement, parameters, allow_8bit_chars);
+        # Unfortunately there is no way to reach self->statement from Python,
+        # so we quote and substitute parameters manually.
+        if params:
+            if isinstance(params, (list, tuple)):
+                params = self._quote_params_for_last_executed_query(params)
+            else:
+                keys = params.keys()
+                values = tuple(params.values())
+                values = self._quote_params_for_last_executed_query(values)
+                params = dict(zip(keys, values))
+            return sql % params
+        # For consistency with SQLiteCursorWrapper.execute(), just return sql
+        # when there are no parameters. See #13648 and #17158.
+        else:
+            return sql
 
     def quote_name(self, name):
         if name.startswith('"') and name.endswith('"'):
@@ -184,13 +226,11 @@ class DatabaseOperations(BaseDatabaseOperations):
             value = uuid.UUID(value)
         return value
 
-    def bulk_insert_sql(self, fields, num_values):
-        res = []
-        res.append("SELECT %s" % ", ".join(
-            "%%s AS %s" % self.quote_name(f.column) for f in fields
-        ))
-        res.extend(["UNION ALL SELECT %s" % ", ".join(["%s"] * len(fields))] * (num_values - 1))
-        return " ".join(res)
+    def bulk_insert_sql(self, fields, placeholder_rows):
+        return " UNION ALL ".join(
+            "SELECT %s" % ", ".join(row)
+            for row in placeholder_rows
+        )
 
     def combine_expression(self, connector, sub_expressions):
         # SQLite doesn't have a power function, so we fake it with a

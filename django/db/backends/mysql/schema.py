@@ -50,7 +50,8 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         super(DatabaseSchemaEditor, self).add_field(model, field)
 
         # Simulate the effect of a one-off default.
-        if self.skip_default(field) and field.default not in {None, NOT_PROVIDED}:
+        # field.default may be unhashable, so a set isn't used for "in" check.
+        if self.skip_default(field) and field.default not in (None, NOT_PROVIDED):
             effective_default = self.effective_default(field)
             self.execute('UPDATE %(table)s SET %(column)s = %%s' % {
                 'table': self.quote_name(model._meta.db_table),
@@ -80,11 +81,9 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
         """
         first_field = model._meta.get_field(fields[0])
         if first_field.get_internal_type() == 'ForeignKey':
-            constraint_names = self._constraint_names(model, fields[0], index=True)
+            constraint_names = self._constraint_names(model, [first_field.column], index=True)
             if not constraint_names:
-                self.execute(
-                    self._create_index_sql(model, [model._meta.get_field(fields[0])], suffix="")
-                )
+                self.execute(self._create_index_sql(model, [first_field], suffix=""))
         return super(DatabaseSchemaEditor, self)._delete_composed_index(model, fields, *args)
 
     def _set_field_new_type_null_status(self, field, new_type):

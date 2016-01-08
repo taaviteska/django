@@ -12,8 +12,8 @@ from django.contrib.contenttypes.models import ContentType
 from django.contrib.sites.models import Site
 from django.core import checks
 from django.db import connections, models
-from django.test import TestCase, override_settings
-from django.test.utils import captured_stdout
+from django.test import SimpleTestCase, TestCase, override_settings
+from django.test.utils import captured_stdout, isolate_apps
 from django.utils.encoding import force_str, force_text
 
 from .models import Article, Author, SchemeIncludedURL
@@ -114,20 +114,9 @@ class ContentTypesViewsTests(TestCase):
         self.assertEqual(force_text(ct), 'modelcreatedonthefly')
 
 
-class IsolatedModelsTestCase(TestCase):
-    def setUp(self):
-        # The unmanaged models need to be removed after the test in order to
-        # prevent bad interactions with the flush operation in other tests.
-        self._old_models = apps.app_configs['contenttypes_tests'].models.copy()
-
-    def tearDown(self):
-        apps.app_configs['contenttypes_tests'].models = self._old_models
-        apps.all_models['contenttypes_tests'] = self._old_models
-        apps.clear_cache()
-
-
 @override_settings(SILENCED_SYSTEM_CHECKS=['fields.W342'])  # ForeignKey(unique=True)
-class GenericForeignKeyTests(IsolatedModelsTestCase):
+@isolate_apps('contenttypes_tests', attr_name='apps')
+class GenericForeignKeyTests(SimpleTestCase):
 
     def test_str(self):
         class Model(models.Model):
@@ -164,7 +153,10 @@ class GenericForeignKeyTests(IsolatedModelsTestCase):
         expected = [
             checks.Error(
                 "'Model.content_type' is not a ForeignKey.",
-                hint="GenericForeignKeys must use a ForeignKey to 'contenttypes.ContentType' as the 'content_type' field.",
+                hint=(
+                    "GenericForeignKeys must use a ForeignKey to "
+                    "'contenttypes.ContentType' as the 'content_type' field."
+                ),
                 obj=Model.content_object,
                 id='contenttypes.E003',
             )
@@ -173,7 +165,7 @@ class GenericForeignKeyTests(IsolatedModelsTestCase):
 
     def test_content_type_field_pointing_to_wrong_model(self):
         class Model(models.Model):
-            content_type = models.ForeignKey('self')  # should point to ContentType
+            content_type = models.ForeignKey('self', models.CASCADE)  # should point to ContentType
             object_id = models.PositiveIntegerField()
             content_object = GenericForeignKey(
                 'content_type', 'object_id')
@@ -182,7 +174,10 @@ class GenericForeignKeyTests(IsolatedModelsTestCase):
         expected = [
             checks.Error(
                 "'Model.content_type' is not a ForeignKey to 'contenttypes.ContentType'.",
-                hint="GenericForeignKeys must use a ForeignKey to 'contenttypes.ContentType' as the 'content_type' field.",
+                hint=(
+                    "GenericForeignKeys must use a ForeignKey to "
+                    "'contenttypes.ContentType' as the 'content_type' field."
+                ),
                 obj=Model.content_object,
                 id='contenttypes.E004',
             )
@@ -191,7 +186,7 @@ class GenericForeignKeyTests(IsolatedModelsTestCase):
 
     def test_missing_object_id_field(self):
         class TaggedItem(models.Model):
-            content_type = models.ForeignKey(ContentType)
+            content_type = models.ForeignKey(ContentType, models.CASCADE)
             # missing object_id field
             content_object = GenericForeignKey()
 
@@ -208,7 +203,7 @@ class GenericForeignKeyTests(IsolatedModelsTestCase):
 
     def test_field_name_ending_with_underscore(self):
         class Model(models.Model):
-            content_type = models.ForeignKey(ContentType)
+            content_type = models.ForeignKey(ContentType, models.CASCADE)
             object_id = models.PositiveIntegerField()
             content_object_ = GenericForeignKey(
                 'content_type', 'object_id')
@@ -233,63 +228,16 @@ class GenericForeignKeyTests(IsolatedModelsTestCase):
         class Model(models.Model):
             content_object = MyGenericForeignKey()
 
-        errors = checks.run_checks()
+        errors = checks.run_checks(app_configs=self.apps.get_app_configs())
         self.assertEqual(errors, ['performed!'])
 
-    def test_unsaved_instance_on_generic_foreign_key(self):
-        """
-        #10811 -- Assigning an unsaved object to GenericForeignKey
-        should raise an exception.
-        """
-        class Model(models.Model):
-            content_type = models.ForeignKey(ContentType, null=True)
-            object_id = models.PositiveIntegerField(null=True)
-            content_object = GenericForeignKey('content_type', 'object_id')
 
-        author = Author(name='Author')
-        model = Model()
-        model.content_object = None   # no error here as content_type allows None
-        with self.assertRaisesMessage(ValueError,
-                                    'Cannot assign "%r": "%s" instance isn\'t saved in the database.'
-                                    % (author, author._meta.object_name)):
-            model.content_object = author   # raised ValueError here as author is unsaved
-
-        author.save()
-        model.content_object = author   # no error because the instance is saved
-
-    def test_unsaved_instance_on_generic_foreign_key_allowed_when_wanted(self):
-        """
-        #24495 - Assigning an unsaved object to a GenericForeignKey
-        should be allowed when the allow_unsaved_instance_assignment
-        attribute has been set to True.
-        """
-        class UnsavedGenericForeignKey(GenericForeignKey):
-            # A GenericForeignKey which can point to an unsaved object
-            allow_unsaved_instance_assignment = True
-
-        class Band(models.Model):
-            name = models.CharField(max_length=50)
-
-        class BandMember(models.Model):
-            band_ct = models.ForeignKey(ContentType)
-            band_id = models.PositiveIntegerField()
-            band = UnsavedGenericForeignKey('band_ct', 'band_id')
-            first_name = models.CharField(max_length=50)
-            last_name = models.CharField(max_length=50)
-
-        beatles = Band(name='The Beatles')
-        john = BandMember(first_name='John', last_name='Lennon')
-        # This should not raise an exception as the GenericForeignKey between
-        # member and band has allow_unsaved_instance_assignment=True.
-        john.band = beatles
-        self.assertEqual(john.band, beatles)
-
-
-class GenericRelationshipTests(IsolatedModelsTestCase):
+@isolate_apps('contenttypes_tests')
+class GenericRelationshipTests(SimpleTestCase):
 
     def test_valid_generic_relationship(self):
         class TaggedItem(models.Model):
-            content_type = models.ForeignKey(ContentType)
+            content_type = models.ForeignKey(ContentType, models.CASCADE)
             object_id = models.PositiveIntegerField()
             content_object = GenericForeignKey()
 
@@ -301,7 +249,7 @@ class GenericRelationshipTests(IsolatedModelsTestCase):
 
     def test_valid_generic_relationship_with_explicit_fields(self):
         class TaggedItem(models.Model):
-            custom_content_type = models.ForeignKey(ContentType)
+            custom_content_type = models.ForeignKey(ContentType, models.CASCADE)
             custom_object_id = models.PositiveIntegerField()
             content_object = GenericForeignKey(
                 'custom_content_type', 'custom_object_id')
@@ -333,7 +281,7 @@ class GenericRelationshipTests(IsolatedModelsTestCase):
     def test_valid_self_referential_generic_relationship(self):
         class Model(models.Model):
             rel = GenericRelation('Model')
-            content_type = models.ForeignKey(ContentType)
+            content_type = models.ForeignKey(ContentType, models.CASCADE)
             object_id = models.PositiveIntegerField()
             content_object = GenericForeignKey(
                 'content_type', 'object_id')
@@ -343,7 +291,7 @@ class GenericRelationshipTests(IsolatedModelsTestCase):
 
     def test_missing_generic_foreign_key(self):
         class TaggedItem(models.Model):
-            content_type = models.ForeignKey(ContentType)
+            content_type = models.ForeignKey(ContentType, models.CASCADE)
             object_id = models.PositiveIntegerField()
 
         class Bookmark(models.Model):
@@ -368,7 +316,7 @@ class GenericRelationshipTests(IsolatedModelsTestCase):
             pass
 
         class SwappedModel(models.Model):
-            content_type = models.ForeignKey(ContentType)
+            content_type = models.ForeignKey(ContentType, models.CASCADE)
             object_id = models.PositiveIntegerField()
             content_object = GenericForeignKey()
 
@@ -393,7 +341,7 @@ class GenericRelationshipTests(IsolatedModelsTestCase):
 
     def test_field_name_ending_with_underscore(self):
         class TaggedItem(models.Model):
-            content_type = models.ForeignKey(ContentType)
+            content_type = models.ForeignKey(ContentType, models.CASCADE)
             object_id = models.PositiveIntegerField()
             content_object = GenericForeignKey()
 

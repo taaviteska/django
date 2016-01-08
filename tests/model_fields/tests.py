@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
 import datetime
@@ -18,8 +19,9 @@ from django.db.models.fields import (
     TimeField, URLField,
 )
 from django.db.models.fields.files import FileField, ImageField
-from django.test.utils import requires_tz_support
+from django.test.utils import isolate_apps, requires_tz_support
 from django.utils import six, timezone
+from django.utils.encoding import force_str
 from django.utils.functional import lazy
 
 from .models import (
@@ -27,7 +29,8 @@ from .models import (
     Document, FksToBooleans, FkToChar, FloatModel, Foo, GenericIPAddress,
     IntegerModel, NullBooleanModel, PositiveIntegerModel,
     PositiveSmallIntegerModel, Post, PrimaryKeyCharModel, RenamedField,
-    SmallIntegerModel, VerboseNameField, Whiz, WhizIter, WhizIterEmpty,
+    SmallIntegerModel, UnicodeSlugField, VerboseNameField, Whiz, WhizIter,
+    WhizIterEmpty,
 )
 
 
@@ -49,7 +52,6 @@ class BasicFieldTests(test.TestCase):
         """
         Regression test for #13071: NullBooleanField should not throw
         a validation error when given a value of None.
-
         """
         nullboolean = NullBooleanModel(nbfield=None)
         try:
@@ -96,8 +98,13 @@ class BasicFieldTests(test.TestCase):
         self.assertTrue(instance.id)
         # Set field to object on saved instance
         instance.size = instance
+        msg = (
+            "Tried to update field model_fields.FloatModel.size with a model "
+            "instance, <FloatModel: FloatModel object>. Use a value "
+            "compatible with FloatField."
+        )
         with transaction.atomic():
-            with self.assertRaises(TypeError):
+            with self.assertRaisesMessage(TypeError, msg):
                 instance.save()
         # Try setting field to object on retrieved object
         obj = FloatModel.objects.get(pk=instance.id)
@@ -113,7 +120,6 @@ class BasicFieldTests(test.TestCase):
         self.assertIsInstance(field.formfield(choices_form_class=klass), klass)
 
     def test_field_str(self):
-        from django.utils.encoding import force_str
         f = Foo._meta.get_field('a')
         self.assertEqual(force_str(f), "model_fields.Foo.a")
 
@@ -164,6 +170,24 @@ class DecimalFieldTests(test.TestCase):
         # This should not crash. That counts as a win for our purposes.
         Foo.objects.filter(d__gte=100000000000)
 
+    def test_max_digits_validation(self):
+        field = models.DecimalField(max_digits=2)
+        expected_message = validators.DecimalValidator.messages['max_digits'] % {'max': 2}
+        with self.assertRaisesMessage(ValidationError, expected_message):
+            field.clean(100, None)
+
+    def test_max_decimal_places_validation(self):
+        field = models.DecimalField(decimal_places=1)
+        expected_message = validators.DecimalValidator.messages['max_decimal_places'] % {'max': 1}
+        with self.assertRaisesMessage(ValidationError, expected_message):
+            field.clean(Decimal('0.99'), None)
+
+    def test_max_whole_digits_validation(self):
+        field = models.DecimalField(max_digits=3, decimal_places=1)
+        expected_message = validators.DecimalValidator.messages['max_whole_digits'] % {'max': 2}
+        with self.assertRaisesMessage(ValidationError, expected_message):
+            field.clean(Decimal('999'), None)
+
 
 class ForeignKeyTests(test.TestCase):
     def test_callable_default(self):
@@ -183,9 +207,13 @@ class ForeignKeyTests(test.TestCase):
         fk_model_empty = FkToChar.objects.select_related('out').get(id=fk_model_empty.pk)
         self.assertEqual(fk_model_empty.out, char_model_empty)
 
+    @isolate_apps('model_fields')
     def test_warning_when_unique_true_on_fk(self):
+        class Foo(models.Model):
+            pass
+
         class FKUniqueTrue(models.Model):
-            fk_field = models.ForeignKey(Foo, unique=True)
+            fk_field = models.ForeignKey(Foo, models.CASCADE, unique=True)
 
         model = FKUniqueTrue()
         expected_warnings = [
@@ -211,7 +239,7 @@ class ForeignKeyTests(test.TestCase):
         pending_ops_before = list(apps._pending_operations.items())
 
         class AbstractForeignKeyModel(models.Model):
-            fk = models.ForeignKey('missing.FK')
+            fk = models.ForeignKey('missing.FK', models.CASCADE)
 
             class Meta:
                 abstract = True
@@ -233,7 +261,7 @@ class ManyToManyFieldTests(test.SimpleTestCase):
         pending_ops_before = list(apps._pending_operations.items())
 
         class AbstractManyToManyModel(models.Model):
-            fk = models.ForeignKey('missing.FK')
+            fk = models.ForeignKey('missing.FK', models.CASCADE)
 
             class Meta:
                 abstract = True
@@ -478,8 +506,8 @@ class BooleanFieldTests(test.TestCase):
 class ChoicesTests(test.SimpleTestCase):
     def test_choices_and_field_display(self):
         """
-        Check that get_choices and get_flatchoices interact with
-        get_FIELD_display to return the expected values (#7913).
+        Check that get_choices() interacts with get_FIELD_display() to return
+        the expected values (#7913).
         """
         self.assertEqual(Whiz(c=1).get_c_display(), 'First')    # A nested value
         self.assertEqual(Whiz(c=0).get_c_display(), 'Other')    # A top level value
@@ -514,6 +542,14 @@ class SlugFieldTests(test.TestCase):
         bs = BigS.objects.create(s='slug' * 50)
         bs = BigS.objects.get(pk=bs.pk)
         self.assertEqual(bs.s, 'slug' * 50)
+
+    def test_slugfield_unicode_max_length(self):
+        """
+        SlugField with allow_unicode=True should honor max_length.
+        """
+        bs = UnicodeSlugField.objects.create(s='你好你好' * 50)
+        bs = UnicodeSlugField.objects.get(pk=bs.pk)
+        self.assertEqual(bs.s, '你好你好' * 50)
 
 
 class ValidationTest(test.SimpleTestCase):
@@ -592,6 +628,12 @@ class IntegerFieldTests(test.TestCase):
     model = IntegerModel
     documented_range = (-2147483648, 2147483647)
 
+    @property
+    def backend_range(self):
+        field = self.model._meta.get_field('value')
+        internal_type = field.get_internal_type()
+        return connection.ops.integer_field_range(internal_type)
+
     def test_documented_range(self):
         """
         Ensure that values within the documented safe range pass validation,
@@ -613,14 +655,34 @@ class IntegerFieldTests(test.TestCase):
         self.assertEqual(qs.count(), 1)
         self.assertEqual(qs[0].value, max_value)
 
+    def test_backend_range_save(self):
+        """
+        Ensure that backend specific range can be saved without corruption.
+        """
+        min_value, max_value = self.backend_range
+
+        if min_value is not None:
+            instance = self.model(value=min_value)
+            instance.full_clean()
+            instance.save()
+            qs = self.model.objects.filter(value__lte=min_value)
+            self.assertEqual(qs.count(), 1)
+            self.assertEqual(qs[0].value, min_value)
+
+        if max_value is not None:
+            instance = self.model(value=max_value)
+            instance.full_clean()
+            instance.save()
+            qs = self.model.objects.filter(value__gte=max_value)
+            self.assertEqual(qs.count(), 1)
+            self.assertEqual(qs[0].value, max_value)
+
     def test_backend_range_validation(self):
         """
         Ensure that backend specific range are enforced at the model
         validation level. ref #12030.
         """
-        field = self.model._meta.get_field('value')
-        internal_type = field.get_internal_type()
-        min_value, max_value = connection.ops.integer_field_range(internal_type)
+        min_value, max_value = self.backend_range
 
         if min_value is not None:
             instance = self.model(value=min_value - 1)
@@ -681,7 +743,6 @@ class TypeCoercionTests(test.TestCase):
     Test that database lookups can accept the wrong types and convert
     them with no error: especially on Postgres 8.3+ which does not do
     automatic casting at the DB level. See #10015.
-
     """
     def test_lookup_integer_in_charfield(self):
         self.assertEqual(Post.objects.filter(title=9).count(), 0)
@@ -695,7 +756,6 @@ class FileFieldTests(unittest.TestCase):
         """
         Test that FileField.save_form_data will clear its instance attribute
         value if passed False.
-
         """
         d = Document(myfile='something.txt')
         self.assertEqual(d.myfile, 'something.txt')
@@ -707,7 +767,6 @@ class FileFieldTests(unittest.TestCase):
         """
         Test that FileField.save_form_data considers None to mean "no change"
         rather than "clear".
-
         """
         d = Document(myfile='something.txt')
         self.assertEqual(d.myfile, 'something.txt')
@@ -719,7 +778,6 @@ class FileFieldTests(unittest.TestCase):
         """
         Test that FileField.save_form_data, if passed a truthy value, updates
         its instance attribute.
-
         """
         d = Document(myfile='something.txt')
         self.assertEqual(d.myfile, 'something.txt')
@@ -737,6 +795,11 @@ class FileFieldTests(unittest.TestCase):
             d.myfile.delete()
         except OSError:
             self.fail("Deleting an unset FileField should not raise OSError.")
+
+    def test_refresh_from_db(self):
+        d = Document.objects.create(myfile='something.txt')
+        d.refresh_from_db()
+        self.assertIs(d.myfile.instance, d)
 
 
 class BinaryFieldTests(test.TestCase):
@@ -797,10 +860,11 @@ class PromiseTest(test.SimpleTestCase):
 
     @unittest.skipIf(six.PY3, "Python 3 has no `long` type.")
     def test_BigIntegerField(self):
-        lazy_func = lazy(lambda: long(9999999999999999999), long)
+        # NOQA: long undefined on PY3
+        lazy_func = lazy(lambda: long(9999999999999999999), long)  # NOQA
         self.assertIsInstance(
             BigIntegerField().get_prep_value(lazy_func()),
-            long)
+            long)  # NOQA
 
     def test_BinaryField(self):
         lazy_func = lazy(lambda: b'', bytes)

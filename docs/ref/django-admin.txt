@@ -6,15 +6,13 @@ django-admin and manage.py
 This document outlines all it can do.
 
 In addition, ``manage.py`` is automatically created in each Django project.
-``manage.py`` is a thin wrapper around ``django-admin`` that takes care of
-several things for you before delegating to ``django-admin``:
+``manage.py`` does the same thing as ``django-admin`` but takes care of a few
+things for you:
 
 * It puts your project's package on ``sys.path``.
 
 * It sets the :envvar:`DJANGO_SETTINGS_MODULE` environment variable so that
   it points to your project's ``settings.py`` file.
-
-* It calls :func:`django.setup()` to initialize various internals of Django.
 
 The ``django-admin`` script should be on your system path if you installed
 Django via its ``setup.py`` utility. If it's not on your path, you can find it
@@ -33,7 +31,12 @@ Django settings files, use ``django-admin`` with
 option.
 
 The command-line examples throughout this document use ``django-admin`` to
-be consistent, but any example can use ``manage.py`` just as well.
+be consistent, but any example can use ``manage.py`` or ``python -m django``
+just as well.
+
+.. versionadded:: 1.9
+
+    ``python -m django`` was added.
 
 Usage
 =====
@@ -42,6 +45,7 @@ Usage
 
     $ django-admin <command> [options]
     $ manage.py <command> [options]
+    $ python -m django <command> [options]
 
 ``command`` should be one of the commands listed in this document.
 ``options``, which is optional, should be zero or more of the options available
@@ -126,8 +130,6 @@ List all available tags.
 
 .. django-admin-option:: --deploy
 
-.. versionadded:: 1.8
-
 The ``--deploy`` option activates some additional checks that are only relevant
 in a deployment setting.
 
@@ -142,6 +144,16 @@ or by passing the ``--settings`` option::
 Or you could run it directly on a production or staging deployment to verify
 that the correct settings are in use (omitting ``--settings``). You could even
 make it part of your integration test suite.
+
+.. django-admin-option:: --fail-level
+
+.. versionadded:: 1.10
+
+Specifies the message level that will cause the command to exit with a non-zero
+status. Default is ``ERROR``.
+
+Available levels are: ``CRITICAL``, ``ERROR``, ``WARNING``, ``INFO``, and
+``DEBUG``.
 
 compilemessages
 ---------------
@@ -161,9 +173,10 @@ are excluded.
 You can pass ``--use-fuzzy`` option (or ``-f``) to include fuzzy translations
 into compiled files.
 
-.. versionchanged:: 1.8
+.. versionchanged:: 1.9
 
-    Added ``--exclude`` and ``--use-fuzzy`` options.
+    ``compilemessages`` now matches the operation of :djadmin:`makemessages`,
+    scanning the project tree for ``.po`` files to compile.
 
 Example usage::
 
@@ -208,11 +221,12 @@ Runs the command-line client for the database engine specified in your
 * For PostgreSQL, this runs the ``psql`` command-line client.
 * For MySQL, this runs the ``mysql`` command-line client.
 * For SQLite, this runs the ``sqlite3`` command-line client.
+* For Oracle, this runs the ``sqlplus`` command-line client.
 
 This command assumes the programs are on your ``PATH`` so that a simple call to
-the program name (``psql``, ``mysql``, ``sqlite3``) will find the program in
-the right place. There's no way to specify the location of the program
-manually.
+the program name (``psql``, ``mysql``, ``sqlite3``, ``sqlplus``) will find the
+program in the right place. There's no way to specify the location of the
+program manually.
 
 The :djadminopt:`--database` option can be used to specify the database
 onto which to open a shell.
@@ -300,10 +314,14 @@ one model.
 
 .. django-admin-option:: --output
 
-.. versionadded:: 1.8
-
 By default ``dumpdata`` will output all the serialized data to standard output.
 This option allows you to specify the file to which the data is to be written.
+When this option is set and the verbosity is greater than 0 (the default), a
+progress bar is shown in the terminal.
+
+.. versionchanged:: 1.9
+
+    The progress bar in the terminal was added.
 
 flush
 -----
@@ -327,17 +345,17 @@ inspectdb
 
 .. django-admin:: inspectdb
 
-Introspects the database tables and views in the database pointed-to by the
+Introspects the database tables in the database pointed-to by the
 :setting:`NAME` setting and outputs a Django model module (a ``models.py``
 file) to standard output.
 
 Use this if you have a legacy database with which you'd like to use Django.
-The script will inspect the database and create a model for each table or view
-within it.
+The script will inspect the database and create a model for each table within
+it.
 
 As you might expect, the created models will have an attribute for every field
-in the table or view. Note that ``inspectdb`` has a few special cases in its
-field-name output:
+in the table. Note that ``inspectdb`` has a few special cases in its field-name
+output:
 
 * If ``inspectdb`` cannot map a column's type to a model field type, it'll
   use ``TextField`` and will insert the Python comment
@@ -380,11 +398,6 @@ it because ``True`` is its default value).
 The :djadminopt:`--database` option may be used to specify the
 database to introspect.
 
-.. versionadded:: 1.8
-
-    A feature to inspect database views was added. In previous versions, only
-    tables (not views) were inspected.
-
 loaddata <fixture fixture ...>
 ------------------------------
 
@@ -404,10 +417,6 @@ models that may have been removed since the fixture was originally generated.
 
 The :djadminopt:`--app` option can be used to specify a single app to look
 for fixtures in rather than looking through all apps.
-
-.. versionchanged:: 1.8
-
-    ``--ignorenonexistent`` also ignores non-existent models.
 
 What's a "fixture"?
 ~~~~~~~~~~~~~~~~~~~
@@ -574,8 +583,6 @@ Separate multiple extensions with commas or use -e or --extension multiple times
 Use the :djadminopt:`--locale` option (or its shorter version ``-l``) to
 specify the locale(s) to process.
 
-.. versionadded:: 1.8
-
 Use the :djadminopt:`--exclude` option (or its shorter version ``-x``) to
 specify the locale(s) to exclude from processing. If not provided, no locales
 are excluded.
@@ -638,7 +645,7 @@ for technically skilled translators to understand each message's context.
 .. django-admin-option:: --keep-pot
 
 Use the ``--keep-pot`` option to prevent Django from deleting the temporary
-.pot files it generates before creating the .po file. This is useful for
+``.pot`` files it generates before creating the .po file. This is useful for
 debugging errors which may prevent the final language files from being created.
 
 .. seealso::
@@ -685,18 +692,25 @@ The ``--merge`` option enables fixing of migration conflicts.
 
 .. django-admin-option:: --name, -n
 
-.. versionadded:: 1.8
-
 The ``--name`` option allows you to give the migration(s) a custom name instead
 of a generated one.
 
 .. django-admin-option:: --exit, -e
 
-.. versionadded:: 1.8
+.. deprecated:: 1.10
+
+   Use the :djadminopt:`--check` option instead.
 
 The ``--exit`` option will cause ``makemigrations`` to exit with error code 1
 when no migrations are created (or would have been created, if combined with
 ``--dry-run``).
+
+.. django-admin-option:: --check
+
+.. versionadded:: 1.10
+
+The ``--check`` option makes ``makemigrations`` exit with a non-zero status
+when model changes without migrations are detected.
 
 migrate [<app_label> [<migrationname>]]
 ---------------------------------------
@@ -734,8 +748,6 @@ be warned that using ``--fake`` runs the risk of putting the migration state
 table into a state where manual recovery will be needed to make migrations
 run correctly.
 
-.. versionadded:: 1.8
-
 .. django-admin-option:: --fake-initial
 
 The ``--fake-initial`` option can be used to allow Django to skip an app's
@@ -747,10 +759,13 @@ option does not, however, check for matching database schema beyond matching
 table names and so is only safe to use if you are confident that your existing
 schema matches what is recorded in your initial migration.
 
-.. deprecated:: 1.8
+.. django-admin-option:: --run-syncdb
 
-    The ``--list`` option has been moved to the :djadmin:`showmigrations`
-    command.
+.. versionadded:: 1.9
+
+The ``--run-syncdb`` option allows creating tables for apps without migrations.
+While this isn't recommended, the migrations framework is sometimes too slow
+on large projects with hundreds of models.
 
 runserver [port or address:port]
 --------------------------------
@@ -897,6 +912,18 @@ recipient(s) specified. For example::
 
     django-admin sendtestemail foo@example.com bar@example.com
 
+.. django-admin-option:: --managers
+
+Use the ``--managers`` option to mail the email addresses specified in
+:setting:`MANAGERS` using :meth:`~django.core.mail.mail_managers()`.
+
+.. django-admin-option:: --admins
+
+Use the ``--admins`` option to mail the email addresses specified in
+:setting:`ADMINS` using :meth:`~django.core.mail.mail_admins()`.
+
+Note that you may use any combination of these options together.
+
 shell
 -----
 
@@ -906,9 +933,15 @@ Starts the Python interactive interpreter.
 
 Django will use IPython_ or bpython_ if either is installed. If you have a
 rich shell installed but want to force use of the "plain" Python interpreter,
-use the ``--plain`` option, like so::
+use the ``-i python`` or ``--interface python`` option, like so::
 
-    django-admin shell --plain
+    django-admin shell -i python
+    django-admin shell --interface python
+
+.. deprecated:: 1.10
+
+   In older versions, use the ``--plain`` option. This is deprecated and will
+   be removed in Django 2.0.
 
 If you would like to specify either IPython or bpython as your interpreter if
 you have both installed you can specify an alternative interpreter interface
@@ -930,19 +963,26 @@ bpython::
 .. _bpython: http://bpython-interpreter.org/
 
 When the "plain" Python interactive interpreter starts (be it because
-``--plain`` was specified or because no other interactive interface is
-available) it reads the script pointed to by the :envvar:`PYTHONSTARTUP`
+``--interface python`` was specified or because no other interactive interface
+is available) it reads the script pointed to by the :envvar:`PYTHONSTARTUP`
 environment variable and the ``~/.pythonrc.py`` script. If you don't wish this
 behavior you can use the ``--no-startup`` option. e.g.::
 
-    django-admin shell --plain --no-startup
+    django-admin shell --interface python --no-startup
+
+.. django-admin-option:: --command, -c <command>
+
+.. versionadded:: 1.10
+
+The ``--command`` option lets you pass a command as a string to execute it as
+Django, like so::
+
+    django-admin shell --command="import django; print(django.__version__)"
 
 showmigrations [<app_label> [<app_label>]]
 ------------------------------------------
 
 .. django-admin:: showmigrations
-
-.. versionadded:: 1.8
 
 Shows all migrations in a project.
 
@@ -1016,8 +1056,8 @@ of sync with its automatically incremented field data.
 The :djadminopt:`--database` option can be used to specify the database for
 which to print the SQL.
 
-squashmigrations <app_label> <migration_name>
----------------------------------------------
+squashmigrations <app_label> [<start_migration_name>] <migration_name>
+----------------------------------------------------------------------
 
 .. django-admin:: squashmigrations
 
@@ -1025,6 +1065,13 @@ Squashes the migrations for ``app_label`` up to and including ``migration_name``
 down into fewer migrations, if possible. The resulting squashed migrations
 can live alongside the unsquashed ones safely. For more information,
 please read :ref:`migration-squashing`.
+
+.. versionadded:: 1.9
+
+When ``start_migration_name`` is given, Django will only include migrations
+starting from and including this migration. This helps to mitigate the
+squashing limitation of :class:`~django.db.migrations.operations.RunPython` and
+:class:`django.db.migrations.operations.RunSQL` migration operations.
 
 .. django-admin-option:: --no-optimize
 
@@ -1074,7 +1121,7 @@ Django will also accept URLs (``http``, ``https``, ``ftp``) to compressed
 archives with the app template files, downloading and extracting them on the
 fly.
 
-For example, taking advantage of Github's feature to expose repositories as
+For example, taking advantage of GitHub's feature to expose repositories as
 zip files, you can use a URL like::
 
     django-admin startapp --template=https://github.com/githubuser/django-app-template/archive/master.zip myapp
@@ -1089,7 +1136,12 @@ with the ``--name`` option. The :class:`template context
   options)
 - ``app_name`` -- the app name as passed to the command
 - ``app_directory`` -- the full path of the newly created app
+- ``camel_case_app_name`` -- the app name in camel case format
 - ``docs_version`` -- the version of the documentation: ``'dev'`` or ``'1.x'``
+
+.. versionadded:: 1.9
+
+    ``camel_case_app_name`` was added.
 
 .. _render_warning:
 
@@ -1144,7 +1196,7 @@ Django will also accept URLs (``http``, ``https``, ``ftp``) to compressed
 archives with the project template files, downloading and extracting them on the
 fly.
 
-For example, taking advantage of Github's feature to expose repositories as
+For example, taking advantage of GitHub's feature to expose repositories as
 zip files, you can use a URL like::
 
     django-admin startproject --template=https://github.com/githubuser/django-project-template/archive/master.zip myproject
@@ -1190,11 +1242,13 @@ provided by the :setting:`TEST_RUNNER` setting.
 
 The ``--liveserver`` option can be used to override the default address where
 the live server (used with :class:`~django.test.LiveServerTestCase`) is
-expected to run from. The default value is ``localhost:8081``.
+expected to run from. The default value is ``localhost:8081-8179``.
+
+.. versionchanged:: 1.9
+
+    In earlier versions, the default value was ``localhost:8081``.
 
 .. django-admin-option:: --keepdb
-
-.. versionadded:: 1.8
 
 The ``--keepdb`` option can be used to preserve the test database between test
 runs. This has the advantage of skipping both the create and destroy actions
@@ -1205,8 +1259,6 @@ be applied to the test database before running the test suite.
 
 .. django-admin-option:: --reverse
 
-.. versionadded:: 1.8
-
 The ``--reverse`` option can be used to sort test cases in the opposite order.
 This may help in debugging the side effects of tests that aren't properly
 isolated. :ref:`Grouping by test class <order-of-tests>` is preserved when using
@@ -1214,11 +1266,55 @@ this option.
 
 .. django-admin-option:: --debug-sql
 
-.. versionadded:: 1.8
-
 The ``--debug-sql`` option can be used to enable :ref:`SQL logging
 <django-db-logger>` for failing tests. If :djadminopt:`--verbosity` is ``2``,
 then queries in passing tests are also output.
+
+.. django-admin-option:: --parallel
+
+.. versionadded:: 1.9
+
+The ``--parallel`` option can be used to run tests in parallel in separate
+processes. Since modern processors have multiple cores, this allows running
+tests significantly faster.
+
+By default ``--parallel`` runs one process per core according to
+:func:`multiprocessing.cpu_count()`. You can adjust the number of processes
+either by providing it as the option's value, e.g. ``--parallel=4``, or by
+setting the ``DJANGO_TEST_PROCESSES`` environment variable.
+
+Django distributes test cases — :class:`unittest.TestCase` subclasses — to
+subprocesses. If there are fewer test cases than configured processes, Django
+will reduce the number of processes accordingly.
+
+Each process gets its own database. You must ensure that different test cases
+don't access the same resources. For instance, test cases that touch the
+filesystem should create a temporary directory for their own use.
+
+This option requires the third-party ``tblib`` package to display tracebacks
+correctly:
+
+.. code-block:: console
+
+    $ pip install tblib
+
+This feature isn't available on Windows. It doesn't work with the Oracle
+database backend either.
+
+If you want to use :mod:`pdb` while debugging tests, you must disable parallel
+execution (``--parallel=1``). You'll see something like ``bdb.BdbQuit`` if you
+don't.
+
+.. warning::
+
+    When test parallelization is enabled and a test fails, Django may be
+    unable to display the exception traceback. This can make debugging
+    difficult. If you encounter this problem, run the affected test without
+    parallelization to see the traceback of the failure.
+
+    This is a known limitation. It arises from the need to serialize objects
+    in order to exchange them between processes. See
+    :ref:`python:pickle-picklable` for details.
 
 testserver <fixture fixture ...>
 --------------------------------
@@ -1341,8 +1437,6 @@ it when running interactively.
 
 Use the ``--database`` option to specify the database into which the superuser
 object will be saved.
-
-.. versionadded:: 1.8
 
 You can subclass the management command and override ``get_input_data()`` if you
 want to customize data input and validation. Consult the source code for
@@ -1471,7 +1565,7 @@ that ``django-admin`` should print to the console.
 
 Example usage::
 
-    django-admin sqlall --no-color
+    django-admin runserver --no-color
 
 By default, ``django-admin`` will format the output to be colorized. For
 example, errors will be printed to the console in red and SQL statements will
@@ -1515,7 +1609,12 @@ If not provided all locales are processed.
 
 Use the ``--noinput`` option to suppress all user prompting, such as "Are
 you sure?" confirmation messages. This is useful if ``django-admin`` is
-being executed as an unattended, automated script.
+being executed as an unattended, automated script. You can use ``--no-input``
+as an alias for this option.
+
+.. versionchanged:: 1.9
+
+    The ``--no-input`` alias was added.
 
 Extra niceties
 ==============
@@ -1558,6 +1657,8 @@ number of roles in which color is used:
 
 * ``error`` - A major error.
 * ``notice`` - A minor error.
+* ``success`` - A success.
+* ``warning`` - A warning.
 * ``sql_field`` - The name of a model field in SQL.
 * ``sql_coltype`` - The type of a model field in SQL.
 * ``sql_keyword`` - An SQL keyword.
@@ -1569,6 +1670,12 @@ number of roles in which color is used:
 * ``http_not_found`` - A 404 HTTP Not Found server response.
 * ``http_bad_request`` - A 4XX HTTP Bad Request server response other than 404.
 * ``http_server_error`` - A 5XX HTTP Server Error response.
+* ``migrate_heading`` - A heading in a migrations management command.
+* ``migrate_label`` - A migration name.
+
+.. versionchanged:: 1.9
+
+    ``success`` was added.
 
 Each of these roles can be assigned a specific foreground and
 background color, from the following list:
@@ -1676,13 +1783,6 @@ Named arguments can be passed by using either one of the following syntaxes::
       # `use_natural_foreign_keys` is the option destination variable
       management.call_command('dumpdata', use_natural_foreign_keys=True)
 
-.. versionchanged:: 1.8
-
-    The first syntax is now supported thanks to management commands using the
-    :py:mod:`argparse` module. For the second syntax, Django previously passed
-    the option name as-is to the command, now it is always using the ``dest``
-    variable name (which may or may not be the same as the option name).
-
 Command options which take multiple options are passed a list::
 
       management.call_command('dumpdata', exclude=['contenttypes', 'auth'])
@@ -1693,5 +1793,5 @@ Output redirection
 Note that you can redirect standard output and error streams as all commands
 support the ``stdout`` and ``stderr`` options. For example, you could write::
 
-    with open('/tmp/command_output') as f:
+    with open('/path/to/command_output') as f:
         management.call_command('dumpdata', stdout=f)

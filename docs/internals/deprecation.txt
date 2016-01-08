@@ -7,9 +7,9 @@ in a backward incompatible way, following their deprecation, as per the
 :ref:`deprecation policy <internal-release-deprecation-policy>`. More details
 about each item can often be found in the release notes of two versions prior.
 
-.. _deprecation-removed-in-2.1:
+.. _deprecation-removed-in-2.0:
 
-2.1
+2.0
 ---
 
 See the :ref:`Django 1.9 release notes<deprecated-features-1.9>` for more
@@ -30,6 +30,9 @@ details on these changes.
 
 * ``Field.remote_field.to`` attribute will be removed.
 
+* The ``on_delete`` argument for ``ForeignKey`` and ``OneToOneField``  will be
+  required.
+
 * ``django.db.models.fields.add_lazy_relation()`` will be removed.
 
 * When time zone support is enabled, database backends that don't support time
@@ -41,6 +44,8 @@ details on these changes.
   removed.
 
 * The ``GeoManager`` and ``GeoQuerySet`` classes will be removed.
+
+* The ``django.contrib.gis.geoip`` module will be removed.
 
 * The ``supports_recursion`` check for template loaders will be removed from:
 
@@ -66,10 +71,69 @@ details on these changes.
 * Support for custom error views with a single positional parameter will be
   dropped.
 
-.. _deprecation-removed-in-2.0:
+* The ``mime_type`` attribute of ``django.utils.feedgenerator.Atom1Feed`` and
+  ``django.utils.feedgenerator.RssFeed`` will be removed in favor of
+  ``content_type``.
 
-2.0
----
+* The ``app_name`` argument to :func:`~django.conf.urls.include()` will be
+  removed.
+
+* Support for passing a 3-tuple as the first argument to ``include()`` will
+  be removed.
+
+* Support for setting a URL instance namespace without an application
+  namespace will be removed.
+
+* ``Field._get_val_from_obj()`` will be removed in favor of
+  ``Field.value_from_object()``.
+
+* ``django.template.loaders.eggs.Loader`` will be removed.
+
+* The ``current_app`` parameter to the ``contrib.auth`` views will be removed.
+
+* The ``callable_obj`` keyword argument to
+  ``SimpleTestCase.assertRaisesMessage()`` will be removed.
+
+* Support for the ``allow_tags`` attribute on ``ModelAdmin`` methods will be
+  removed.
+
+* The ``enclosure`` keyword argument to ``SyndicationFeed.add_item()`` will be
+  removed.
+
+* The ``django.template.loader.LoaderOrigin`` and
+  ``django.template.base.StringOrigin`` aliases for
+  ``django.template.base.Origin`` will be removed.
+
+See the :ref:`Django 1.10 release notes <deprecated-features-1.10>` for more
+details on these changes.
+
+* The ``makemigrations --exit`` option will be removed.
+
+* Support for direct assignment to a reverse foreign key or many-to-many
+  relation will be removed.
+
+* The ``get_srid()`` and ``set_srid()`` methods of
+  ``django.contrib.gis.geos.GEOSGeometry`` will be removed.
+
+* The ``get_x()``, ``set_x()``, ``get_y()``, ``set_y()``, ``get_z()``, and
+  ``set_z()`` methods of ``django.contrib.gis.geos.Point`` will be removed.
+
+* The ``get_coords()`` and ``set_coords()`` methods of
+  ``django.contrib.gis.geos.Point`` will be removed.
+
+* The ``cascaded_union`` property of ``django.contrib.gis.geos.MultiPolygon``
+  will be removed.
+
+* ``django.utils.functional.allow_lazy()`` will be removed.
+
+* The ``shell --plain`` option will be removed.
+
+* The ``django.core.urlresolvers`` module will be removed.
+
+.. _deprecation-removed-in-1.10:
+
+1.10
+----
 
 See the :ref:`Django 1.8 release notes<deprecated-features-1.8>` for more
 details on these changes.
@@ -90,13 +154,12 @@ details on these changes.
 * Using an incorrect count of unpacked values in the ``for`` template tag
   will raise an exception rather than fail silently.
 
-* The ability to :func:`~django.core.urlresolvers.reverse` URLs using a dotted
-  Python path will be removed.
+* The ability to reverse URLs using a dotted Python path will be removed.
 
 * Support for :py:mod:`optparse` will be dropped for custom management commands
   (replaced by :py:mod:`argparse`).
 
-* The class :class:`~django.core.management.NoArgsCommand` will be removed. Use
+* The class ``django.core.management.NoArgsCommand`` will be removed. Use
   :class:`~django.core.management.BaseCommand` instead, which takes no arguments
   by default.
 
@@ -222,7 +285,7 @@ details on these changes.
   will be removed.
 
 * ``GeoQuerySet`` aggregate methods ``collect()``, ``extent()``, ``extent3d()``,
-  ``makeline()``, and ``union()`` will be removed.
+  ``make_line()``, and ``unionagg()`` will be removed.
 
 * Ability to specify ``ContentType.name`` when creating a content type instance
   will be removed.
@@ -233,6 +296,9 @@ details on these changes.
 
 * Support for the syntax of ``{% cycle %}`` that uses comma-separated arguments
   will be removed.
+
+* The warning that :class:`~django.core.signing.Signer` issues when given an
+  invalid separator will become an exception.
 
 .. _deprecation-removed-in-1.9:
 
@@ -258,9 +324,15 @@ details on these changes.
 * ``allow_syncdb`` on database routers will no longer automatically become
   ``allow_migrate``.
 
-* The legacy method of syncing apps without migrations will be removed,
-  and migrations will become compulsory for all apps. This includes automatic
-  loading of ``initial_data`` fixtures and support for initial SQL data.
+* Automatic syncing of apps without migrations will be removed. Migrations will
+  become compulsory for all apps unless you pass the ``--run-syncdb`` option to
+  ``migrate``.
+
+* The SQL management commands for apps without migrations, ``sql``, ``sqlall``,
+  ``sqlclear``, ``sqldropindexes``, and ``sqlindexes``, will be removed.
+
+* Support for automatic loading of ``initial_data`` fixtures and initial SQL
+  data will be removed.
 
 * All models will need to be defined inside an installed application or
   declare an explicit :attr:`~django.db.models.Options.app_label`.
@@ -482,8 +554,8 @@ details on these changes.
   :class:`~django.template.response.SimpleTemplateResponse`, and
   :class:`~django.template.response.TemplateResponse`, will be removed.
   ``content_type`` should be used instead. This also applies to the
-  :func:`~django.shortcuts.render_to_response` shortcut and
-  the sitemap views, :func:`~django.contrib.sitemaps.views.index` and
+  ``render_to_response()`` shortcut and the sitemap views,
+  :func:`~django.contrib.sitemaps.views.index` and
   :func:`~django.contrib.sitemaps.views.sitemap`.
 
 * When :class:`~django.http.HttpResponse` is instantiated with an iterator,
@@ -586,7 +658,7 @@ details on these changes.
   :mod:`django.contrib.gis.utils` will be removed.
 
 * ``django.conf.urls.defaults`` will be removed. The functions
-  :func:`~django.conf.urls.include`, :func:`~django.conf.urls.patterns` and
+  :func:`~django.conf.urls.include`, ``patterns()`` and
   :func:`~django.conf.urls.url` plus :data:`~django.conf.urls.handler404`,
   :data:`~django.conf.urls.handler500`, are now available through
   :mod:`django.conf.urls` .
@@ -651,10 +723,10 @@ details on these changes.
   handling. (This is faster than the usual deprecation path; see the
   :doc:`Django 1.4 release notes</releases/1.4>`.)
 
-* The :ttag:`url` and :ttag:`ssi` template tags will be
-  modified so that the first argument to each tag is a template variable, not
-  an implied string. In 1.4, this behavior is provided by a version of the tag
-  in the ``future`` template tag library.
+* The ``url`` and ``ssi`` template tags will be modified so that the first
+  argument to each tag is a template variable, not an implied string. In 1.4,
+  this behavior is provided by a version of the tag in the ``future`` template
+  tag library.
 
 * The ``reset`` and ``sqlreset`` management commands will be removed.
 

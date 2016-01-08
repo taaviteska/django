@@ -240,6 +240,30 @@ class CaseExpressionTests(TestCase):
             transform=itemgetter('integer', 'max', 'test')
         )
 
+    def test_annotate_exclude(self):
+        self.assertQuerysetEqual(
+            CaseTestModel.objects.annotate(test=Case(
+                When(integer=1, then=Value('one')),
+                When(integer=2, then=Value('two')),
+                default=Value('other'),
+                output_field=models.CharField(),
+            )).exclude(test='other').order_by('pk'),
+            [(1, 'one'), (2, 'two'), (2, 'two')],
+            transform=attrgetter('integer', 'test')
+        )
+
+    def test_annotate_values_not_in_order_by(self):
+        self.assertEqual(
+            list(CaseTestModel.objects.annotate(test=Case(
+                When(integer=1, then=Value('one')),
+                When(integer=2, then=Value('two')),
+                When(integer=3, then=Value('three')),
+                default=Value('other'),
+                output_field=models.CharField(),
+            )).order_by('test').values_list('integer', flat=True)),
+            [1, 4, 3, 3, 3, 2, 2]
+        )
+
     def test_combined_expression(self):
         self.assertQuerysetEqual(
             CaseTestModel.objects.annotate(
@@ -677,7 +701,15 @@ class CaseExpressionTests(TestCase):
         )
         self.assertQuerysetEqual(
             CaseTestModel.objects.all().order_by('pk'),
-            [(1, Decimal('1.1')), (2, Decimal('2.2')), (3, None), (2, Decimal('2.2')), (3, None), (3, None), (4, None)],
+            [
+                (1, Decimal('1.1')),
+                (2, Decimal('2.2')),
+                (3, None),
+                (2, Decimal('2.2')),
+                (3, None),
+                (3, None),
+                (4, None)
+            ],
             transform=attrgetter('integer', 'decimal')
         )
 
@@ -922,8 +954,13 @@ class CaseExpressionTests(TestCase):
         self.assertQuerysetEqual(
             CaseTestModel.objects.all().order_by('pk'),
             [
-                (1, UUID('11111111111111111111111111111111')), (2, UUID('22222222222222222222222222222222')), (3, None),
-                (2, UUID('22222222222222222222222222222222')), (3, None), (3, None), (4, None)
+                (1, UUID('11111111111111111111111111111111')),
+                (2, UUID('22222222222222222222222222222222')),
+                (3, None),
+                (2, UUID('22222222222222222222222222222222')),
+                (3, None),
+                (3, None),
+                (4, None),
             ],
             transform=attrgetter('integer', 'uuid')
         )
@@ -1046,6 +1083,48 @@ class CaseExpressionTests(TestCase):
             ),
             [(o, 2)],
             lambda x: (x, x.foo)
+        )
+
+    def test_join_promotion_multiple_annotations(self):
+        o = CaseTestModel.objects.create(integer=1, integer2=1, string='1')
+        # Testing that:
+        # 1. There isn't any object on the remote side of the fk_rel
+        #    relation. If the query used inner joins, then the join to fk_rel
+        #    would remove o from the results. So, in effect we are testing that
+        #    we are promoting the fk_rel join to a left outer join here.
+        # 2. The default value of 3 is generated for the case expression.
+        self.assertQuerysetEqual(
+            CaseTestModel.objects.filter(pk=o.pk).annotate(
+                foo=Case(
+                    When(fk_rel__pk=1, then=2),
+                    default=3,
+                    output_field=models.IntegerField()
+                ),
+                bar=Case(
+                    When(fk_rel__pk=1, then=4),
+                    default=5,
+                    output_field=models.IntegerField()
+                ),
+            ),
+            [(o, 3, 5)],
+            lambda x: (x, x.foo, x.bar)
+        )
+        # Now 2 should be generated, as the fk_rel is null.
+        self.assertQuerysetEqual(
+            CaseTestModel.objects.filter(pk=o.pk).annotate(
+                foo=Case(
+                    When(fk_rel__isnull=True, then=2),
+                    default=3,
+                    output_field=models.IntegerField()
+                ),
+                bar=Case(
+                    When(fk_rel__isnull=True, then=4),
+                    default=5,
+                    output_field=models.IntegerField()
+                ),
+            ),
+            [(o, 2, 4)],
+            lambda x: (x, x.foo, x.bar)
         )
 
     def test_m2m_exclude(self):

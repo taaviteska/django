@@ -1,3 +1,4 @@
+import logging
 from collections import defaultdict
 
 from django.utils import six
@@ -11,6 +12,8 @@ from .library import Library
 register = Library()
 
 BLOCK_CONTEXT_KEY = 'block_context'
+
+logger = logging.getLogger('django.template')
 
 
 class ExtendsError(Exception):
@@ -101,7 +104,7 @@ class ExtendsNode(Node):
         passed as the skip argument. This enables extends to work recursively
         without extending the same template twice.
         """
-        # RemovedInDjango21Warning: If any non-recursive loaders are installed
+        # RemovedInDjango20Warning: If any non-recursive loaders are installed
         # do a direct template lookup. If the same template name appears twice,
         # raise an exception to avoid system recursion.
         for loader in context.template.engine.template_loaders:
@@ -171,6 +174,8 @@ class ExtendsNode(Node):
 
 
 class IncludeNode(Node):
+    context_key = '__include_context'
+
     def __init__(self, template, *args, **kwargs):
         self.template = template
         self.extra_context = kwargs.pop('extra_context', {})
@@ -178,12 +183,22 @@ class IncludeNode(Node):
         super(IncludeNode, self).__init__(*args, **kwargs)
 
     def render(self, context):
+        """
+        Render the specified template and context. Cache the template object
+        in render_context to avoid reparsing and loading when used in a for
+        loop.
+        """
         try:
             template = self.template.resolve(context)
             # Does this quack like a Template?
             if not callable(getattr(template, 'render', None)):
-                # If not, we'll try get_template
-                template = context.template.engine.get_template(template)
+                # If not, we'll try our cache, and get_template()
+                template_name = template
+                cache = context.render_context.setdefault(self.context_key, {})
+                template = cache.get(template_name)
+                if template is None:
+                    template = context.template.engine.get_template(template_name)
+                    cache[template_name] = template
             values = {
                 name: var.resolve(context)
                 for name, var in six.iteritems(self.extra_context)
@@ -195,6 +210,13 @@ class IncludeNode(Node):
         except Exception:
             if context.template.engine.debug:
                 raise
+            template_name = getattr(context, 'template_name', None) or 'unknown'
+            logger.warning(
+                "Exception raised while rendering {%% include %%} for "
+                "template '%s'. Empty string rendered instead.",
+                template_name,
+                exc_info=True,
+            )
             return ''
 
 

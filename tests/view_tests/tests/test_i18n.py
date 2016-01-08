@@ -8,11 +8,11 @@ import unittest
 from os import path
 
 from django.conf import settings
-from django.core.urlresolvers import reverse
 from django.test import (
     LiveServerTestCase, SimpleTestCase, TestCase, modify_settings,
     override_settings,
 )
+from django.urls import reverse
 from django.utils import six
 from django.utils._os import upath
 from django.utils.module_loading import import_string
@@ -105,6 +105,20 @@ class I18NTests(TestCase):
                     # Message with context (msgctxt)
                     self.assertContains(response, '"month name\\u0004May": "mai"', 1)
 
+    def test_jsoni18n(self):
+        """
+        The json_catalog returns the language catalog and settings as JSON.
+        """
+        with override('de'):
+            response = self.client.get('/jsoni18n/')
+            data = json.loads(response.content.decode('utf-8'))
+            self.assertIn('catalog', data)
+            self.assertIn('formats', data)
+            self.assertIn('plural', data)
+            self.assertEqual(data['catalog']['month name\x04May'], 'Mai')
+            self.assertIn('DATETIME_FORMAT', data['formats'])
+            self.assertEqual(data['plural'], '(n != 1)')
+
 
 @override_settings(ROOT_URLCONF='view_tests.urls')
 class JsI18NTests(SimpleTestCase):
@@ -126,6 +140,21 @@ class JsI18NTests(SimpleTestCase):
         with self.settings(LANGUAGE_CODE='es'), override('en-us'):
             response = self.client.get('/jsi18n/')
             self.assertNotContains(response, 'esto tiene que ser traducido')
+
+    def test_jsoni18n_with_missing_en_files(self):
+        """
+        Same as above for the json_catalog view. Here we also check for the
+        expected JSON format.
+        """
+        with self.settings(LANGUAGE_CODE='es'), override('en-us'):
+            response = self.client.get('/jsoni18n/')
+            data = json.loads(response.content.decode('utf-8'))
+            self.assertIn('catalog', data)
+            self.assertIn('formats', data)
+            self.assertIn('plural', data)
+            self.assertEqual(data['catalog'], {})
+            self.assertIn('DATETIME_FORMAT', data['formats'])
+            self.assertIsNone(data['plural'])
 
     def test_jsi18n_fallback_language(self):
         """
@@ -179,7 +208,6 @@ class JsI18NTests(SimpleTestCase):
         """
         with self.settings(LANGUAGE_CODE='en-us'), override('fr'):
             response = self.client.get('/jsi18n/app5/')
-            self.assertEqual(response.status_code, 200)
             self.assertContains(response, 'emoji')
             self.assertContains(response, '\\ud83d\\udca9')
 
@@ -249,6 +277,7 @@ class JavascriptI18nTests(LiveServerTestCase):
         except Exception as e:
             raise unittest.SkipTest('Selenium webdriver "%s" not installed or '
                                     'not operational: %s' % (cls.webdriver_class, str(e)))
+        cls.selenium.implicitly_wait(10)
         super(JavascriptI18nTests, cls).setUpClass()
 
     @classmethod

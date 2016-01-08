@@ -5,11 +5,11 @@ from django.conf import settings
 from django.contrib.admin import ModelAdmin, actions
 from django.contrib.auth import REDIRECT_FIELD_NAME
 from django.core.exceptions import ImproperlyConfigured, PermissionDenied
-from django.core.urlresolvers import NoReverseMatch, reverse
 from django.db.models.base import ModelBase
 from django.http import Http404, HttpResponseRedirect
 from django.template.engine import Engine
 from django.template.response import TemplateResponse
+from django.urls import NoReverseMatch, reverse
 from django.utils import six
 from django.utils.text import capfirst
 from django.utils.translation import ugettext as _, ugettext_lazy
@@ -47,6 +47,8 @@ class AdminSite(object):
 
     # URL for the "View site" link at the top of each admin page.
     site_url = '/'
+
+    _empty_value_display = '-'
 
     login_form = None
     index_template = None
@@ -101,11 +103,12 @@ class AdminSite(object):
                     options['__module__'] = __name__
                     admin_class = type("%sAdmin" % model.__name__, (admin_class,), options)
 
-                if admin_class is not ModelAdmin and settings.DEBUG:
-                    system_check_errors.extend(admin_class.check(model))
-
                 # Instantiate the admin class to save in the registry
-                self._registry[model] = admin_class(model, self)
+                admin_obj = admin_class(model, self)
+                if admin_class is not ModelAdmin and settings.DEBUG:
+                    system_check_errors.extend(admin_obj.check())
+
+                self._registry[model] = admin_obj
 
     def unregister(self, model_or_iterable):
         """
@@ -153,6 +156,14 @@ class AdminSite(object):
         Get all the enabled actions as an iterable of (name, func).
         """
         return six.iteritems(self._actions)
+
+    @property
+    def empty_value_display(self):
+        return self._empty_value_display
+
+    @empty_value_display.setter
+    def empty_value_display(self, empty_value_display):
+        self._empty_value_display = empty_value_display
 
     def has_permission(self, request):
         """
@@ -295,11 +306,16 @@ class AdminSite(object):
         """
         Returns a dictionary of variables to put in the template context for
         *every* page in the admin site.
+
+        For sites running on a subpath, use the SCRIPT_NAME value if site_url
+        hasn't been customized.
         """
+        script_name = request.META['SCRIPT_NAME']
+        site_url = script_name if self.site_url == '/' and script_name else self.site_url
         return {
             'site_title': self.site_title,
             'site_header': self.site_header,
-            'site_url': self.site_url,
+            'site_url': site_url,
             'has_permission': self.has_permission(request),
             'available_apps': self.get_app_list(request),
         }
@@ -312,13 +328,13 @@ class AdminSite(object):
         from django.contrib.auth.views import password_change
         url = reverse('admin:password_change_done', current_app=self.name)
         defaults = {
-            'current_app': self.name,
             'password_change_form': AdminPasswordChangeForm,
             'post_change_redirect': url,
             'extra_context': dict(self.each_context(request), **(extra_context or {})),
         }
         if self.password_change_template is not None:
             defaults['template_name'] = self.password_change_template
+        request.current_app = self.name
         return password_change(request, **defaults)
 
     def password_change_done(self, request, extra_context=None):
@@ -327,11 +343,11 @@ class AdminSite(object):
         """
         from django.contrib.auth.views import password_change_done
         defaults = {
-            'current_app': self.name,
             'extra_context': dict(self.each_context(request), **(extra_context or {})),
         }
         if self.password_change_done_template is not None:
             defaults['template_name'] = self.password_change_done_template
+        request.current_app = self.name
         return password_change_done(request, **defaults)
 
     def i18n_javascript(self, request):
@@ -356,11 +372,17 @@ class AdminSite(object):
         """
         from django.contrib.auth.views import logout
         defaults = {
-            'current_app': self.name,
-            'extra_context': dict(self.each_context(request), **(extra_context or {})),
+            'extra_context': dict(
+                self.each_context(request),
+                # Since the user isn't logged out at this point, the value of
+                # has_permission must be overridden.
+                has_permission=False,
+                **(extra_context or {})
+            ),
         }
         if self.logout_template is not None:
             defaults['template_name'] = self.logout_template
+        request.current_app = self.name
         return logout(request, **defaults)
 
     @never_cache
@@ -384,15 +406,15 @@ class AdminSite(object):
         )
         if (REDIRECT_FIELD_NAME not in request.GET and
                 REDIRECT_FIELD_NAME not in request.POST):
-            context[REDIRECT_FIELD_NAME] = request.get_full_path()
+            context[REDIRECT_FIELD_NAME] = reverse('admin:index', current_app=self.name)
         context.update(extra_context or {})
 
         defaults = {
             'extra_context': context,
-            'current_app': self.name,
             'authentication_form': self.login_form or AdminAuthenticationForm,
             'template_name': self.login_template or 'admin/login.html',
         }
+        request.current_app = self.name
         return login(request, **defaults)
 
     def _build_app_dict(self, request, label=None):

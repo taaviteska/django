@@ -70,6 +70,7 @@ class WSGIServer(simple_server.WSGIServer, object):
     def __init__(self, *args, **kwargs):
         if kwargs.pop('ipv6', False):
             self.address_family = socket.AF_INET6
+        self.allow_reuse_address = kwargs.pop('allow_reuse_address', True)
         super(WSGIServer, self).__init__(*args, **kwargs)
 
     def server_bind(self):
@@ -104,7 +105,7 @@ class WSGIRequestHandler(simple_server.WSGIRequestHandler, object):
 
     def log_message(self, format, *args):
 
-        msg = "[%s]" % self.log_date_time_string()
+        msg = "[%s] " % self.log_date_time_string()
         try:
             msg += "%s\n" % (format % args)
         except UnicodeDecodeError:

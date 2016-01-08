@@ -1,5 +1,4 @@
 from collections import Counter, OrderedDict
-from itertools import chain
 from operator import attrgetter
 
 from django.db import IntegrityError, connections, transaction
@@ -53,18 +52,10 @@ def DO_NOTHING(collector, field, sub_objs, using):
 
 
 def get_candidate_relations_to_delete(opts):
-    # Collect models that contain candidate relations to delete. This may include
-    # relations coming from proxy models.
-    candidate_models = {opts}
-    candidate_models = candidate_models.union(opts.concrete_model._meta.proxied_children)
-    # For each model, get all candidate fields.
-    candidate_model_fields = chain.from_iterable(
-        opts.get_fields(include_hidden=True) for opts in candidate_models
-    )
     # The candidate relations are the ones that come from N-1 and 1-1 relations.
     # N-N  (i.e., many-to-many) relations aren't candidates for deletion.
     return (
-        f for f in candidate_model_fields
+        f for f in opts.get_fields(include_hidden=True)
         if f.auto_created and not f.concrete and (f.one_to_one or f.one_to_many)
     )
 
@@ -73,7 +64,7 @@ class Collector(object):
     def __init__(self, using):
         self.using = using
         # Initially, {model: {instances}}, later values become lists.
-        self.data = {}
+        self.data = OrderedDict()
         self.field_updates = {}  # {model: {(field, value): {instances}}}
         # fast_deletes is a list of queryset-likes that can be deleted without
         # fetching the objects into memory.
@@ -231,17 +222,13 @@ class Collector(object):
                         field.remote_field.on_delete(self, field, sub_objs, self.using)
             for field in model._meta.virtual_fields:
                 if hasattr(field, 'bulk_related_objects'):
-                    # Its something like generic foreign key.
+                    # It's something like generic foreign key.
                     sub_objs = field.bulk_related_objects(new_objs, self.using)
-                    self.collect(sub_objs,
-                                 source=model,
-                                 source_attr=field.remote_field.related_name,
-                                 nullable=True)
+                    self.collect(sub_objs, source=model, nullable=True)
 
     def related_objects(self, related, objs):
         """
         Gets a QuerySet of objects related to ``objs`` via the relation ``related``.
-
         """
         return related.related_model._base_manager.using(self.using).filter(
             **{"%s__in" % related.field.name: objs}

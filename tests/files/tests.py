@@ -6,7 +6,6 @@ import os
 import struct
 import tempfile
 import unittest
-import zlib
 from io import BytesIO, StringIO
 
 from django.core.files import File
@@ -121,6 +120,19 @@ class FileTests(unittest.TestCase):
         f = File(StringIO('one\ntwo\nthree'))
         self.assertEqual(list(f), ['one\n', 'two\n', 'three'])
 
+    def test_seekable(self):
+        """
+        File.seekable() should be available on Python 3.
+        """
+        with tempfile.TemporaryFile() as temp:
+            temp.write(b"contents\n")
+            test_file = File(temp, name="something.txt")
+            if six.PY2:
+                self.assertFalse(hasattr(test_file, 'seekable'))
+            if six.PY3:
+                self.assertTrue(hasattr(test_file, 'seekable'))
+                self.assertTrue(test_file.seekable())
+
 
 class NoNameFileTestCase(unittest.TestCase):
     """
@@ -233,10 +245,7 @@ class InconsistentGetImageDimensionsBug(unittest.TestCase):
         get_image_dimensions fails on some pngs, while Image.size is working good on them
         """
         img_path = os.path.join(os.path.dirname(upath(__file__)), "magic.png")
-        try:
-            size = images.get_image_dimensions(img_path)
-        except zlib.error:
-            self.fail("Exception raised from get_image_dimensions().")
+        size = images.get_image_dimensions(img_path)
         with open(img_path, 'rb') as fh:
             self.assertEqual(size, Image.open(fh).size)
 

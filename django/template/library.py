@@ -1,10 +1,11 @@
 import functools
 import warnings
 from importlib import import_module
-from inspect import getargspec
 
 from django.utils import six
-from django.utils.deprecation import RemovedInDjango21Warning
+from django.utils.deprecation import RemovedInDjango20Warning
+from django.utils.html import conditional_escape
+from django.utils.inspect import getargspec
 from django.utils.itercompat import is_iterable
 
 from .base import Node, Template, token_kwargs
@@ -136,7 +137,7 @@ class Library(object):
     def assignment_tag(self, func=None, takes_context=None, name=None):
         warnings.warn(
             "assignment_tag() is deprecated. Use simple_tag() instead",
-            RemovedInDjango21Warning,
+            RemovedInDjango20Warning,
             stacklevel=2,
         )
         return self.simple_tag(func, takes_context, name)
@@ -201,6 +202,8 @@ class SimpleNode(TagHelperNode):
         if self.target_var is not None:
             context[self.target_var] = output
             return ''
+        if context.autoescape:
+            output = conditional_escape(output)
         return output
 
 
