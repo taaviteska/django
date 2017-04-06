@@ -3,40 +3,44 @@ This module collects helper functions and classes that "span" multiple levels
 of MVC. In other words, these functions/classes introduce controlled coupling
 for convenience's sake.
 """
-from django.db.models.base import ModelBase
-from django.db.models.manager import Manager
-from django.db.models.query import QuerySet
+import warnings
+
 from django.http import (
     Http404, HttpResponse, HttpResponsePermanentRedirect, HttpResponseRedirect,
 )
 from django.template import loader
 from django.urls import NoReverseMatch, reverse
-from django.utils import six
+from django.utils.deprecation import RemovedInDjango30Warning
 from django.utils.encoding import force_text
 from django.utils.functional import Promise
 
 
 def render_to_response(template_name, context=None, content_type=None, status=None, using=None):
     """
-    Returns a HttpResponse whose content is filled with the result of calling
+    Return a HttpResponse whose content is filled with the result of calling
     django.template.loader.render_to_string() with the passed arguments.
     """
+    warnings.warn(
+        'render_to_response() is deprecated in favor render(). It has the '
+        'same signature except that it also requires a request.',
+        RemovedInDjango30Warning, stacklevel=2,
+    )
     content = loader.render_to_string(template_name, context, using=using)
     return HttpResponse(content, content_type, status)
 
 
 def render(request, template_name, context=None, content_type=None, status=None, using=None):
     """
-    Returns a HttpResponse whose content is filled with the result of calling
+    Return a HttpResponse whose content is filled with the result of calling
     django.template.loader.render_to_string() with the passed arguments.
     """
     content = loader.render_to_string(template_name, context, request, using=using)
     return HttpResponse(content, content_type, status)
 
 
-def redirect(to, *args, **kwargs):
+def redirect(to, *args, permanent=False, **kwargs):
     """
-    Returns an HttpResponseRedirect to the appropriate URL for the arguments
+    Return an HttpResponseRedirect to the appropriate URL for the arguments
     passed.
 
     The arguments could be:
@@ -51,40 +55,26 @@ def redirect(to, *args, **kwargs):
     By default issues a temporary redirect; pass permanent=True to issue a
     permanent redirect
     """
-    if kwargs.pop('permanent', False):
-        redirect_class = HttpResponsePermanentRedirect
-    else:
-        redirect_class = HttpResponseRedirect
-
+    redirect_class = HttpResponsePermanentRedirect if permanent else HttpResponseRedirect
     return redirect_class(resolve_url(to, *args, **kwargs))
 
 
 def _get_queryset(klass):
     """
-    Returns a QuerySet from a Model, Manager, or QuerySet. Created to make
-    get_object_or_404 and get_list_or_404 more DRY.
-
-    Raises a ValueError if klass is not a Model, Manager, or QuerySet.
+    Return a QuerySet or a Manager.
+    Duck typing in action: any class with a `get()` method (for
+    get_object_or_404) or a `filter()` method (for get_list_or_404) might do
+    the job.
     """
-    if isinstance(klass, QuerySet):
-        return klass
-    elif isinstance(klass, Manager):
-        manager = klass
-    elif isinstance(klass, ModelBase):
-        manager = klass._default_manager
-    else:
-        if isinstance(klass, type):
-            klass__name = klass.__name__
-        else:
-            klass__name = klass.__class__.__name__
-        raise ValueError("Object is of type '%s', but must be a Django Model, "
-                         "Manager, or QuerySet" % klass__name)
-    return manager.all()
+    # If it is a model class or anything else with ._default_manager
+    if hasattr(klass, '_default_manager'):
+        return klass._default_manager.all()
+    return klass
 
 
 def get_object_or_404(klass, *args, **kwargs):
     """
-    Uses get() to return an object, or raises a Http404 exception if the object
+    Use get() to return an object, or raise a Http404 exception if the object
     does not exist.
 
     klass may be a Model, Manager, or QuerySet object. All other passed
@@ -96,20 +86,33 @@ def get_object_or_404(klass, *args, **kwargs):
     queryset = _get_queryset(klass)
     try:
         return queryset.get(*args, **kwargs)
+    except AttributeError:
+        klass__name = klass.__name__ if isinstance(klass, type) else klass.__class__.__name__
+        raise ValueError(
+            "First argument to get_object_or_404() must be a Model, Manager, "
+            "or QuerySet, not '%s'." % klass__name
+        )
     except queryset.model.DoesNotExist:
         raise Http404('No %s matches the given query.' % queryset.model._meta.object_name)
 
 
 def get_list_or_404(klass, *args, **kwargs):
     """
-    Uses filter() to return a list of objects, or raise a Http404 exception if
+    Use filter() to return a list of objects, or raise a Http404 exception if
     the list is empty.
 
     klass may be a Model, Manager, or QuerySet object. All other passed
     arguments and keyword arguments are used in the filter() query.
     """
     queryset = _get_queryset(klass)
-    obj_list = list(queryset.filter(*args, **kwargs))
+    try:
+        obj_list = list(queryset.filter(*args, **kwargs))
+    except AttributeError:
+        klass__name = klass.__name__ if isinstance(klass, type) else klass.__class__.__name__
+        raise ValueError(
+            "First argument to get_list_or_404() must be a Model, Manager, or "
+            "QuerySet, not '%s'." % klass__name
+        )
     if not obj_list:
         raise Http404('No %s matches the given query.' % queryset.model._meta.object_name)
     return obj_list
@@ -137,7 +140,7 @@ def resolve_url(to, *args, **kwargs):
         # further to some Python functions like urlparse.
         to = force_text(to)
 
-    if isinstance(to, six.string_types):
+    if isinstance(to, str):
         # Handle relative URLs
         if to.startswith(('./', '../')):
             return to

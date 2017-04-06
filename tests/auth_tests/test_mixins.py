@@ -1,3 +1,5 @@
+from unittest import mock
+
 from django.contrib.auth import models
 from django.contrib.auth.mixins import (
     LoginRequiredMixin, PermissionRequiredMixin, UserPassesTestMixin,
@@ -35,12 +37,12 @@ class AlwaysFalseView(AlwaysFalseMixin, EmptyResponseView):
 
 
 class StackedMixinsView1(LoginRequiredMixin, PermissionRequiredMixin, EmptyResponseView):
-    permission_required = ['auth.add_customuser', 'auth.change_customuser']
+    permission_required = ['auth_tests.add_customuser', 'auth_tests.change_customuser']
     raise_exception = True
 
 
 class StackedMixinsView2(PermissionRequiredMixin, LoginRequiredMixin, EmptyResponseView):
-    permission_required = ['auth.add_customuser', 'auth.change_customuser']
+    permission_required = ['auth_tests.add_customuser', 'auth_tests.change_customuser']
     raise_exception = True
 
 
@@ -78,9 +80,9 @@ class AccessMixinTests(TestCase):
         with self.assertRaises(PermissionDenied):
             view(request)
 
+    @mock.patch.object(models.User, 'is_authenticated', False)
     def test_stacked_mixins_not_logged_in(self):
         user = models.User.objects.create(username='joe', password='qwerty')
-        user.is_authenticated = lambda: False
         perms = models.Permission.objects.filter(codename__in=('add_customuser', 'change_customuser'))
         user.user_permissions.add(*perms)
         request = self.factory.get('/rand')
@@ -135,7 +137,8 @@ class UserPassesTestTests(TestCase):
 
         request = self.factory.get('/rand')
         request.user = AnonymousUser()
-        self.assertRaises(PermissionDenied, AView.as_view(), request)
+        with self.assertRaises(PermissionDenied):
+            AView.as_view()(request)
 
     def test_raise_exception_custom_message(self):
         msg = "You don't have access here"
@@ -185,8 +188,8 @@ class LoginRequiredMixinTests(TestCase):
 
     def test_login_required(self):
         """
-        Check that login_required works on a simple view wrapped in a
-        login_required decorator.
+        login_required works on a simple view wrapped in a login_required
+        decorator.
         """
         class AView(LoginRequiredMixin, EmptyResponseView):
             pass
@@ -216,7 +219,7 @@ class PermissionsRequiredMixinTests(TestCase):
 
     def test_many_permissions_pass(self):
         class AView(PermissionRequiredMixin, EmptyResponseView):
-            permission_required = ['auth.add_customuser', 'auth.change_customuser']
+            permission_required = ['auth_tests.add_customuser', 'auth_tests.change_customuser']
 
         request = self.factory.get('/rand')
         request.user = self.user
@@ -225,7 +228,7 @@ class PermissionsRequiredMixinTests(TestCase):
 
     def test_single_permission_pass(self):
         class AView(PermissionRequiredMixin, EmptyResponseView):
-            permission_required = 'auth.add_customuser'
+            permission_required = 'auth_tests.add_customuser'
 
         request = self.factory.get('/rand')
         request.user = self.user
@@ -234,7 +237,9 @@ class PermissionsRequiredMixinTests(TestCase):
 
     def test_permissioned_denied_redirect(self):
         class AView(PermissionRequiredMixin, EmptyResponseView):
-            permission_required = ['auth.add_customuser', 'auth.change_customuser', 'non-existent-permission']
+            permission_required = [
+                'auth_tests.add_customuser', 'auth_tests.change_customuser', 'nonexistent-permission',
+            ]
 
         request = self.factory.get('/rand')
         request.user = self.user
@@ -243,9 +248,12 @@ class PermissionsRequiredMixinTests(TestCase):
 
     def test_permissioned_denied_exception_raised(self):
         class AView(PermissionRequiredMixin, EmptyResponseView):
-            permission_required = ['auth.add_customuser', 'auth.change_customuser', 'non-existent-permission']
+            permission_required = [
+                'auth_tests.add_customuser', 'auth_tests.change_customuser', 'nonexistent-permission',
+            ]
             raise_exception = True
 
         request = self.factory.get('/rand')
         request.user = self.user
-        self.assertRaises(PermissionDenied, AView.as_view(), request)
+        with self.assertRaises(PermissionDenied):
+            AView.as_view()(request)

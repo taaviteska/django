@@ -1,19 +1,15 @@
-from __future__ import unicode_literals
-
 import threading
 from datetime import datetime, timedelta
 
 from django.core.exceptions import MultipleObjectsReturned, ObjectDoesNotExist
 from django.db import DEFAULT_DB_ALIAS, DatabaseError, connections
-from django.db.models.fields import Field
 from django.db.models.manager import BaseManager
 from django.db.models.query import EmptyQuerySet, QuerySet
 from django.test import (
     SimpleTestCase, TestCase, TransactionTestCase, skipIfDBFeature,
     skipUnlessDBFeature,
 )
-from django.utils import six
-from django.utils.translation import ugettext_lazy
+from django.utils.translation import gettext_lazy
 
 from .models import Article, ArticleSelectOnSave, SelfRef
 
@@ -70,16 +66,13 @@ class ModelInstanceCreationTests(TestCase):
         self.assertEqual(a.headline, 'Fourth article')
 
     def test_cannot_create_instance_with_invalid_kwargs(self):
-        six.assertRaisesRegex(
-            self,
-            TypeError,
-            "'foo' is an invalid keyword argument for this function",
-            Article,
-            id=None,
-            headline='Some headline',
-            pub_date=datetime(2005, 7, 31),
-            foo='bar',
-        )
+        with self.assertRaisesMessage(TypeError, "'foo' is an invalid keyword argument for this function"):
+            Article(
+                id=None,
+                headline='Some headline',
+                pub_date=datetime(2005, 7, 31),
+                foo='bar',
+            )
 
     def test_can_leave_off_value_for_autofield_and_it_gets_value_on_save(self):
         """
@@ -89,7 +82,7 @@ class ModelInstanceCreationTests(TestCase):
         a = Article(headline='Article 5', pub_date=datetime(2005, 7, 31))
         a.save()
         self.assertEqual(a.headline, 'Article 5')
-        self.assertNotEqual(a.id, None)
+        self.assertIsNotNone(a.id)
 
     def test_leaving_off_a_field_with_default_set_the_default_will_be_saved(self):
         a = Article(pub_date=datetime(2005, 7, 31))
@@ -103,16 +96,14 @@ class ModelInstanceCreationTests(TestCase):
             pub_date=datetime(2005, 7, 31, 12, 30),
         )
         a1.save()
-        self.assertEqual(Article.objects.get(id__exact=a1.id).pub_date,
-            datetime(2005, 7, 31, 12, 30))
+        self.assertEqual(Article.objects.get(id__exact=a1.id).pub_date, datetime(2005, 7, 31, 12, 30))
 
         a2 = Article(
             headline='Article 8',
             pub_date=datetime(2005, 7, 31, 12, 30, 45),
         )
         a2.save()
-        self.assertEqual(Article.objects.get(id__exact=a2.id).pub_date,
-            datetime(2005, 7, 31, 12, 30, 45))
+        self.assertEqual(Article.objects.get(id__exact=a2.id).pub_date, datetime(2005, 7, 31, 12, 30, 45))
 
     def test_saving_an_object_again_does_not_create_a_new_object(self):
         a = Article(headline='original', pub_date=datetime(2014, 5, 16))
@@ -143,14 +134,8 @@ class ModelInstanceCreationTests(TestCase):
 
 class ModelTest(TestCase):
     def test_objects_attribute_is_only_available_on_the_class_itself(self):
-        six.assertRaisesRegex(
-            self,
-            AttributeError,
-            "Manager isn't accessible via Article instances",
-            getattr,
-            Article(),
-            "objects",
-        )
+        with self.assertRaisesMessage(AttributeError, "Manager isn't accessible via Article instances"):
+            getattr(Article(), "objects",)
         self.assertFalse(hasattr(Article(), 'objects'))
         self.assertTrue(hasattr(Article, 'objects'))
 
@@ -160,14 +145,15 @@ class ModelTest(TestCase):
         some_pub_date = datetime(2014, 5, 16, 12, 1)
         for headline in headlines:
             Article(headline=headline, pub_date=some_pub_date).save()
-        self.assertQuerysetEqual(Article.objects.all().order_by('headline'),
+        self.assertQuerysetEqual(
+            Article.objects.all().order_by('headline'),
             ["<Article: Amazing article>",
              "<Article: An article>",
              "<Article: Article One>",
-             "<Article: Boring article>"])
+             "<Article: Boring article>"]
+        )
         Article.objects.filter(headline__startswith='A').delete()
-        self.assertQuerysetEqual(Article.objects.all().order_by('headline'),
-            ["<Article: Boring article>"])
+        self.assertQuerysetEqual(Article.objects.all().order_by('headline'), ["<Article: Boring article>"])
 
     def test_not_equal_and_equal_operators_behave_as_expected_on_instances(self):
         some_pub_date = datetime(2014, 5, 16, 12, 1)
@@ -186,8 +172,7 @@ class ModelTest(TestCase):
             pub_date=datetime(2005, 7, 31, 12, 30, 45, 180),
         )
         a9.save()
-        self.assertEqual(Article.objects.get(pk=a9.pk).pub_date,
-            datetime(2005, 7, 31, 12, 30, 45, 180))
+        self.assertEqual(Article.objects.get(pk=a9.pk).pub_date, datetime(2005, 7, 31, 12, 30, 45, 180))
 
     @skipIfDBFeature('supports_microsecond_precision')
     def test_microsecond_precision_not_supported(self):
@@ -246,8 +231,10 @@ class ModelTest(TestCase):
             headline='Article 12',
             pub_date=datetime(2008, 12, 31, 23, 59, 59, 999999),
         )
-        self.assertQuerysetEqual(Article.objects.filter(pub_date__year=2008),
-            ["<Article: Article 11>", "<Article: Article 12>"])
+        self.assertQuerysetEqual(
+            Article.objects.filter(pub_date__year=2008),
+            ["<Article: Article 11>", "<Article: Article 12>"]
+        )
 
     def test_unicode_data(self):
         # Unicode data works, too.
@@ -256,8 +243,7 @@ class ModelTest(TestCase):
             pub_date=datetime(2005, 7, 28),
         )
         a.save()
-        self.assertEqual(Article.objects.get(pk=a.id).headline,
-            '\u6797\u539f \u3081\u3050\u307f')
+        self.assertEqual(Article.objects.get(pk=a.id).headline, '\u6797\u539f \u3081\u3050\u307f')
 
     def test_hash_function(self):
         # Model instances have a hash function, so they can be used in sets
@@ -279,22 +265,6 @@ class ModelTest(TestCase):
         s = {a10, a11, a12}
         self.assertIn(Article.objects.get(headline='Article 11'), s)
 
-    def test_field_ordering(self):
-        """
-        Field instances have a `__lt__` comparison function to define an
-        ordering based on their creation. Prior to #17851 this ordering
-        comparison relied on the now unsupported `__cmp__` and was assuming
-        compared objects were both Field instances raising `AttributeError`
-        when it should have returned `NotImplemented`.
-        """
-        f1 = Field()
-        f2 = Field(auto_created=True)
-        f3 = Field()
-        self.assertLess(f2, f1)
-        self.assertGreater(f3, f1)
-        self.assertIsNotNone(f1)
-        self.assertNotIn(f2, (None, 1, ''))
-
     def test_extra_method_select_argument_with_dashes_and_values(self):
         # The 'select' argument to extra() supports names with dashes in
         # them, as long as you use values().
@@ -314,8 +284,10 @@ class ModelTest(TestCase):
         dicts = Article.objects.filter(
             pub_date__year=2008).extra(
             select={'dashed-value': '1'}).values('headline', 'dashed-value')
-        self.assertEqual([sorted(d.items()) for d in dicts],
-            [[('dashed-value', 1), ('headline', 'Article 11')], [('dashed-value', 1), ('headline', 'Article 12')]])
+        self.assertEqual(
+            [sorted(d.items()) for d in dicts],
+            [[('dashed-value', 1), ('headline', 'Article 11')], [('dashed-value', 1), ('headline', 'Article 12')]]
+        )
 
     def test_extra_method_select_argument_with_dashes(self):
         # If you use 'select' with extra() and names containing dashes on a
@@ -338,13 +310,13 @@ class ModelTest(TestCase):
             pub_date__year=2008).extra(select={'dashed-value': '1', 'undashedvalue': '2'})
         self.assertEqual(articles[0].undashedvalue, 2)
 
-    def test_create_relation_with_ugettext_lazy(self):
+    def test_create_relation_with_gettext_lazy(self):
         """
-        Test that ugettext_lazy objects work when saving model instances
+        gettext_lazy objects work when saving model instances
         through various methods. Refs #10498.
         """
         notlazy = 'test'
-        lazy = ugettext_lazy(notlazy)
+        lazy = gettext_lazy(notlazy)
         Article.objects.create(headline=lazy, pub_date=datetime.now())
         article = Article.objects.get()
         self.assertEqual(article.headline, notlazy)
@@ -367,7 +339,7 @@ class ModelTest(TestCase):
         with self.assertRaises(TypeError):
             EmptyQuerySet()
         self.assertIsInstance(Article.objects.none(), EmptyQuerySet)
-        self.assertFalse(isinstance('', EmptyQuerySet))
+        self.assertNotIsInstance('', EmptyQuerySet)
 
     def test_emptyqs_values(self):
         # test for #15959
@@ -430,6 +402,19 @@ class ModelTest(TestCase):
             # hash)
             hash(Article())
 
+    def test_delete_and_access_field(self):
+        # Accessing a field after it's deleted from a model reloads its value.
+        pub_date = datetime.now()
+        article = Article.objects.create(headline='foo', pub_date=pub_date)
+        new_pub_date = article.pub_date + timedelta(days=10)
+        article.headline = 'bar'
+        article.pub_date = new_pub_date
+        del article.headline
+        with self.assertNumQueries(1):
+            self.assertEqual(article.headline, 'foo')
+        # Fields that weren't deleted aren't reloaded.
+        self.assertEqual(article.pub_date, new_pub_date)
+
 
 class ModelLookupTest(TestCase):
     def setUp(self):
@@ -448,8 +433,7 @@ class ModelLookupTest(TestCase):
         self.a.save()
 
         # Article.objects.all() returns all the articles in the database.
-        self.assertQuerysetEqual(Article.objects.all(),
-            ['<Article: Parrot programs in Python>'])
+        self.assertQuerysetEqual(Article.objects.all(), ['<Article: Parrot programs in Python>'])
 
     def test_rich_lookup(self):
         # Django provides a rich database lookup API.
@@ -490,28 +474,14 @@ class ModelLookupTest(TestCase):
     def test_does_not_exist(self):
         # Django raises an Article.DoesNotExist exception for get() if the
         # parameters don't match any object.
-        six.assertRaisesRegex(
-            self,
-            ObjectDoesNotExist,
-            "Article matching query does not exist.",
-            Article.objects.get,
-            id__exact=2000,
-        )
+        with self.assertRaisesMessage(ObjectDoesNotExist, "Article matching query does not exist."):
+            Article.objects.get(id__exact=2000,)
         # To avoid dict-ordering related errors check only one lookup
         # in single assert.
-        self.assertRaises(
-            ObjectDoesNotExist,
-            Article.objects.get,
-            pub_date__year=2005,
-            pub_date__month=8,
-        )
-        six.assertRaisesRegex(
-            self,
-            ObjectDoesNotExist,
-            "Article matching query does not exist.",
-            Article.objects.get,
-            pub_date__week_day=6,
-        )
+        with self.assertRaises(ObjectDoesNotExist):
+            Article.objects.get(pub_date__year=2005, pub_date__month=8)
+        with self.assertRaisesMessage(ObjectDoesNotExist, "Article matching query does not exist."):
+            Article.objects.get(pub_date__week_day=6,)
 
     def test_lookup_by_primary_key(self):
         # Lookup by a primary key is the most common case, so Django
@@ -520,8 +490,7 @@ class ModelLookupTest(TestCase):
         self.assertEqual(Article.objects.get(pk=self.a.id), self.a)
 
         # pk can be used as a shortcut for the primary key name in any query.
-        self.assertQuerysetEqual(Article.objects.filter(pk__in=[self.a.id]),
-            ["<Article: Swallow programs in Python>"])
+        self.assertQuerysetEqual(Article.objects.filter(pk__in=[self.a.id]), ["<Article: Swallow programs in Python>"])
 
         # Model instances of the same type and same ID are considered equal.
         a = Article.objects.get(pk=self.a.id)
@@ -541,28 +510,13 @@ class ModelLookupTest(TestCase):
 
         # Django raises an Article.MultipleObjectsReturned exception if the
         # lookup matches more than one object
-        six.assertRaisesRegex(
-            self,
-            MultipleObjectsReturned,
-            "get\(\) returned more than one Article -- it returned 2!",
-            Article.objects.get,
-            headline__startswith='Swallow',
-        )
-        six.assertRaisesRegex(
-            self,
-            MultipleObjectsReturned,
-            "get\(\) returned more than one Article -- it returned 2!",
-            Article.objects.get,
-            pub_date__year=2005,
-        )
-        six.assertRaisesRegex(
-            self,
-            MultipleObjectsReturned,
-            "get\(\) returned more than one Article -- it returned 2!",
-            Article.objects.get,
-            pub_date__year=2005,
-            pub_date__month=7,
-        )
+        msg = "get() returned more than one Article -- it returned 2!"
+        with self.assertRaisesMessage(MultipleObjectsReturned, msg):
+            Article.objects.get(headline__startswith='Swallow',)
+        with self.assertRaisesMessage(MultipleObjectsReturned, msg):
+            Article.objects.get(pub_date__year=2005,)
+        with self.assertRaisesMessage(MultipleObjectsReturned, msg):
+            Article.objects.get(pub_date__year=2005, pub_date__month=7)
 
 
 class ConcurrentSaveTests(TransactionTestCase):
@@ -633,6 +587,9 @@ class ManagerTest(SimpleTestCase):
         '_insert',
         '_update',
         'raw',
+        'union',
+        'intersection',
+        'difference',
     ]
 
     def test_manager_methods(self):
@@ -667,9 +624,8 @@ class SelectOnSaveTests(TestCase):
 
     def test_select_on_save_lying_update(self):
         """
-        Test that select_on_save works correctly if the database
-        doesn't return correct information about matched rows from
-        UPDATE.
+        select_on_save works correctly if the database doesn't return correct
+        information about matched rows from UPDATE.
         """
         # Change the manager to not return "row matched" for update().
         # We are going to change the Article's _base_manager class
@@ -677,7 +633,7 @@ class SelectOnSaveTests(TestCase):
         # test this properly otherwise. Article's manager, because
         # proxy models use their parent model's _base_manager.
 
-        orig_class = Article._base_manager.__class__
+        orig_class = Article._base_manager._queryset_class
 
         class FakeQuerySet(QuerySet):
             # Make sure the _update method below is in fact called.
@@ -685,14 +641,11 @@ class SelectOnSaveTests(TestCase):
 
             def _update(self, *args, **kwargs):
                 FakeQuerySet.called = True
-                super(FakeQuerySet, self)._update(*args, **kwargs)
+                super()._update(*args, **kwargs)
                 return 0
 
-        class FakeManager(orig_class):
-            def get_queryset(self):
-                return FakeQuerySet(self.model)
         try:
-            Article._base_manager.__class__ = FakeManager
+            Article._base_manager._queryset_class = FakeQuerySet
             asos = ArticleSelectOnSave.objects.create(pub_date=datetime.now())
             with self.assertNumQueries(3):
                 asos.save()
@@ -705,7 +658,7 @@ class SelectOnSaveTests(TestCase):
             with self.assertRaises(DatabaseError):
                 asos.save(update_fields=['pub_date'])
         finally:
-            Article._base_manager.__class__ = orig_class
+            Article._base_manager._queryset_class = orig_class
 
 
 class ModelRefreshTests(TestCase):
@@ -732,6 +685,11 @@ class ModelRefreshTests(TestCase):
         with self.assertNumQueries(1):
             a.refresh_from_db()
             self.assertEqual(a.pub_date, new_pub_date)
+
+    def test_unknown_kwarg(self):
+        s = SelfRef.objects.create()
+        with self.assertRaises(TypeError):
+            s.refresh_from_db(unknown_kwarg=10)
 
     def test_refresh_fk(self):
         s1 = SelfRef.objects.create()

@@ -1,6 +1,3 @@
-
-.. _index:
-
 ====================
 Django documentation
 ====================
@@ -42,8 +39,7 @@ will help you know where to look for certain things:
   application development. Also look at the ":ref:`index-first-steps`" below.
 
 * :doc:`Topic guides </topics/index>` discuss key topics and concepts at a
-  fairly a fairly high level and provide useful background information and
-  explanation.
+  fairly high level and provide useful background information and explanation.
 
 * :doc:`Reference guides </ref/index>` contain technical reference for APIs and
   other aspects of Django's machinery. They describe how it works and how to
@@ -86,6 +82,7 @@ manipulating the data of your Web application. Learn more about it below:
 * **Models:**
   :doc:`Introduction to models <topics/db/models>` |
   :doc:`Field types <ref/models/fields>` |
+  :doc:`Indexes <ref/models/indexes>` |
   :doc:`Meta options <ref/models/options>` |
   :doc:`Model class <ref/models/class>`
 
@@ -109,6 +106,7 @@ manipulating the data of your Web application. Learn more about it below:
   :doc:`Raw SQL <topics/db/sql>` |
   :doc:`Transactions <topics/db/transactions>` |
   :doc:`Aggregation <topics/db/aggregation>` |
+  :doc:`Search <topics/db/search>` |
   :doc:`Custom fields <howto/custom-model-fields>` |
   :doc:`Multiple databases <topics/db/multi-db>` |
   :doc:`Custom lookups <howto/custom-lookups>` |
@@ -284,7 +282,6 @@ Django aims to be compatible with multiple different flavors and versions of
 Python:
 
 * :doc:`Jython support <howto/jython>`
-* :doc:`Python 3 compatibility <topics/python3>`
 
 Geographic framework
 ====================
@@ -341,8 +338,6 @@ you can contribute:
   :doc:`How to get involved <internals/contributing/index>` |
   :doc:`The release process <internals/release-process>` |
   :doc:`Team organization <internals/organization>` |
-  :doc:`Meet the team <internals/team>` |
-  :doc:`Current roles <internals/roles>` |
   :doc:`The Django source code repository <internals/git>` |
   :doc:`Security policies <internals/security>` |
   :doc:`Mailing lists <internals/mailing-lists>`

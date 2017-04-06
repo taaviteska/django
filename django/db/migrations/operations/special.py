@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 from django.db import router
 
 from .base import Operation
@@ -7,7 +5,7 @@ from .base import Operation
 
 class SeparateDatabaseAndState(Operation):
     """
-    Takes two lists of operations - ones that will be used for the database,
+    Take two lists of operations - ones that will be used for the database,
     and ones that will be used for the state change. This allows operations
     that don't support state change to have it applied, or have operations
     that affect the state or not the database, or so on.
@@ -64,18 +62,19 @@ class SeparateDatabaseAndState(Operation):
 
 class RunSQL(Operation):
     """
-    Runs some raw SQL. A reverse SQL statement may be provided.
+    Run some raw SQL. A reverse SQL statement may be provided.
 
-    Also accepts a list of operations that represent the state change effected
+    Also accept a list of operations that represent the state change effected
     by this SQL change, in case it's custom column/table creation/deletion.
     """
     noop = ''
 
-    def __init__(self, sql, reverse_sql=None, state_operations=None, hints=None):
+    def __init__(self, sql, reverse_sql=None, state_operations=None, hints=None, elidable=False):
         self.sql = sql
         self.reverse_sql = reverse_sql
         self.state_operations = state_operations or []
         self.hints = hints or {}
+        self.elidable = elidable
 
     def deconstruct(self):
         kwargs = {
@@ -133,12 +132,12 @@ class RunSQL(Operation):
 
 class RunPython(Operation):
     """
-    Runs Python code in a context suitable for doing versioned ORM operations.
+    Run Python code in a context suitable for doing versioned ORM operations.
     """
 
     reduces_to_sql = False
 
-    def __init__(self, code, reverse_code=None, atomic=True, hints=None):
+    def __init__(self, code, reverse_code=None, atomic=None, hints=None, elidable=False):
         self.atomic = atomic
         # Forwards code
         if not callable(code):
@@ -152,6 +151,7 @@ class RunPython(Operation):
                 raise ValueError("RunPython must be supplied with callable arguments")
             self.reverse_code = reverse_code
         self.hints = hints or {}
+        self.elidable = elidable
 
     def deconstruct(self):
         kwargs = {
@@ -159,7 +159,7 @@ class RunPython(Operation):
         }
         if self.reverse_code is not None:
             kwargs['reverse_code'] = self.reverse_code
-        if self.atomic is not True:
+        if self.atomic is not None:
             kwargs['atomic'] = self.atomic
         if self.hints:
             kwargs['hints'] = self.hints
@@ -179,6 +179,9 @@ class RunPython(Operation):
         pass
 
     def database_forwards(self, app_label, schema_editor, from_state, to_state):
+        # RunPython has access to all models. Ensure that all models are
+        # reloaded in case any are delayed.
+        from_state.clear_delayed_apps_cache()
         if router.allow_migrate(schema_editor.connection.alias, app_label, **self.hints):
             # We now execute the Python code in a context that contains a 'models'
             # object, representing the versioned models as an app registry.

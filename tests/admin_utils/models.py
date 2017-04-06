@@ -1,9 +1,7 @@
 from django.db import models
-from django.utils import six
-from django.utils.encoding import python_2_unicode_compatible
+from django.utils.translation import gettext_lazy as _
 
 
-@python_2_unicode_compatible
 class Site(models.Model):
     domain = models.CharField(max_length=100)
 
@@ -17,8 +15,8 @@ class Article(models.Model):
     """
     site = models.ForeignKey(Site, models.CASCADE, related_name="admin_articles")
     title = models.CharField(max_length=100)
-    title2 = models.CharField(max_length=100, verbose_name="another name")
-    created = models.DateTimeField()
+    hist = models.CharField(max_length=100, verbose_name=_("History"))
+    created = models.DateTimeField(null=True)
 
     def test_from_model(self):
         return "nothing"
@@ -33,13 +31,12 @@ class ArticleProxy(Article):
         proxy = True
 
 
-@python_2_unicode_compatible
 class Count(models.Model):
     num = models.PositiveSmallIntegerField()
     parent = models.ForeignKey('self', models.CASCADE, null=True)
 
     def __str__(self):
-        return six.text_type(self.num)
+        return str(self.num)
 
 
 class Event(models.Model):

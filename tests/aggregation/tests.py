@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import datetime
 import re
 from decimal import Decimal
@@ -7,12 +5,12 @@ from decimal import Decimal
 from django.core.exceptions import FieldError
 from django.db import connection
 from django.db.models import (
-    F, Avg, Count, DecimalField, DurationField, FloatField, Func, IntegerField,
+    Avg, Count, DecimalField, DurationField, F, FloatField, Func, IntegerField,
     Max, Min, Sum, Value,
 )
 from django.test import TestCase
 from django.test.utils import Approximate, CaptureQueriesContext
-from django.utils import six, timezone
+from django.utils import timezone
 
 from .models import Author, Book, Publisher, Store
 
@@ -186,7 +184,7 @@ class AggregateTestCase(TestCase):
             page_sum=Sum("pages")).defer('name').filter(pk=self.b1.pk)
 
         rows = [
-            (1, "159059725", 447, "The Definitive Guide to Django: Web Development Done Right")
+            (self.b1.id, "159059725", 447, "The Definitive Guide to Django: Web Development Done Right")
         ]
         self.assertQuerysetEqual(
             qs.order_by('pk'), rows,
@@ -198,7 +196,7 @@ class AggregateTestCase(TestCase):
             page_sum=Sum("pages")).defer('name').filter(pk=self.b1.pk)
 
         rows = [
-            (1, "159059725", 447, "Adrian Holovaty",
+            (self.b1.id, "159059725", 447, "Adrian Holovaty",
              "The Definitive Guide to Django: Web Development Done Right")
         ]
         self.assertQuerysetEqual(
@@ -292,15 +290,15 @@ class AggregateTestCase(TestCase):
         self.assertEqual(
             books, [
                 {
-                    "contact_id": 1,
-                    "id": 1,
+                    "contact_id": self.a1.id,
+                    "id": self.b1.id,
                     "isbn": "159059725",
                     "mean_age": 34.5,
                     "name": "The Definitive Guide to Django: Web Development Done Right",
                     "pages": 447,
                     "price": Approximate(Decimal("30")),
                     "pubdate": datetime.date(2007, 12, 6),
-                    "publisher_id": 1,
+                    "publisher_id": self.p1.id,
                     "rating": 4.5,
                 }
             ]
@@ -315,7 +313,7 @@ class AggregateTestCase(TestCase):
         self.assertEqual(
             list(books), [
                 {
-                    "pk": 1,
+                    "pk": self.b1.pk,
                     "isbn": "159059725",
                     "mean_age": 34.5,
                 }
@@ -335,15 +333,15 @@ class AggregateTestCase(TestCase):
         self.assertEqual(
             list(books), [
                 {
-                    "contact_id": 1,
-                    "id": 1,
+                    "contact_id": self.a1.id,
+                    "id": self.b1.id,
                     "isbn": "159059725",
                     "mean_age": 34.5,
                     "name": "The Definitive Guide to Django: Web Development Done Right",
                     "pages": 447,
                     "price": Approximate(Decimal("30")),
                     "pubdate": datetime.date(2007, 12, 6),
-                    "publisher_id": 1,
+                    "publisher_id": self.p1.id,
                     "rating": 4.5,
                 }
             ]
@@ -496,8 +494,14 @@ class AggregateTestCase(TestCase):
         self.assertEqual(vals, {"num_authors__avg": Approximate(1.66, places=1)})
 
     def test_avg_duration_field(self):
+        # Explicit `output_field`.
         self.assertEqual(
             Publisher.objects.aggregate(Avg('duration', output_field=DurationField())),
+            {'duration__avg': datetime.timedelta(days=1, hours=12)}
+        )
+        # Implicit `output_field`.
+        self.assertEqual(
+            Publisher.objects.aggregate(Avg('duration')),
             {'duration__avg': datetime.timedelta(days=1, hours=12)}
         )
 
@@ -511,7 +515,7 @@ class AggregateTestCase(TestCase):
         """
         Sum on a distinct() QuerySet should aggregate only the distinct items.
         """
-        authors = Author.objects.filter(book__in=[5, 6])
+        authors = Author.objects.filter(book__in=[self.b5, self.b6])
         self.assertEqual(authors.count(), 3)
 
         distinct_authors = authors.distinct()
@@ -530,7 +534,7 @@ class AggregateTestCase(TestCase):
             rating=3.5,
             price=Decimal("1000"),
             publisher=p,
-            contact_id=1,
+            contact_id=self.a1.id,
             pubdate=datetime.date(2008, 12, 1)
         )
         Book.objects.create(
@@ -540,7 +544,7 @@ class AggregateTestCase(TestCase):
             rating=4.0,
             price=Decimal("1000"),
             publisher=p,
-            contact_id=1,
+            contact_id=self.a1.id,
             pubdate=datetime.date(2008, 12, 2)
         )
         Book.objects.create(
@@ -550,7 +554,7 @@ class AggregateTestCase(TestCase):
             rating=4.5,
             price=Decimal("35"),
             publisher=p,
-            contact_id=1,
+            contact_id=self.a1.id,
             pubdate=datetime.date(2008, 12, 3)
         )
 
@@ -729,25 +733,25 @@ class AggregateTestCase(TestCase):
                 {
                     'earliest_book': datetime.date(1991, 10, 15),
                     'num_awards': 9,
-                    'id': 4,
+                    'id': self.p4.id,
                     'name': 'Morgan Kaufmann'
                 },
                 {
                     'earliest_book': datetime.date(1995, 1, 15),
                     'num_awards': 7,
-                    'id': 3,
+                    'id': self.p3.id,
                     'name': 'Prentice Hall'
                 },
                 {
                     'earliest_book': datetime.date(2007, 12, 6),
                     'num_awards': 3,
-                    'id': 1,
+                    'id': self.p1.id,
                     'name': 'Apress'
                 },
                 {
                     'earliest_book': datetime.date(2008, 3, 3),
                     'num_awards': 1,
-                    'id': 2,
+                    'id': self.p2.id,
                     'name': 'Sams'
                 }
             ]
@@ -771,7 +775,7 @@ class AggregateTestCase(TestCase):
         )
         self.assertEqual(
             list(books), [
-                (1, "159059725", 34.5),
+                (self.b1.id, "159059725", 34.5),
             ]
         )
 
@@ -810,7 +814,7 @@ class AggregateTestCase(TestCase):
 
     def test_dates_with_aggregation(self):
         """
-        Test that .dates() returns a distinct set of dates when applied to a
+        .dates() returns a distinct set of dates when applied to a
         QuerySet with aggregation.
 
         Refs #18056. Previously, .dates() would return distinct (date_kind,
@@ -841,8 +845,7 @@ class AggregateTestCase(TestCase):
 
     def test_ticket17424(self):
         """
-        Check that doing exclude() on a foreign model after annotate()
-        doesn't crash.
+        Doing exclude() on a foreign model after annotate() doesn't crash.
         """
         all_books = list(Book.objects.values_list('pk', flat=True).order_by('pk'))
         annotated_books = Book.objects.order_by('pk').annotate(one=Count("id"))
@@ -862,7 +865,7 @@ class AggregateTestCase(TestCase):
 
     def test_ticket12886(self):
         """
-        Check that aggregation over sliced queryset works correctly.
+        Aggregation over sliced queryset works correctly.
         """
         qs = Book.objects.all().order_by('-rating')[0:3]
         vals = qs.aggregate(average_top3_rating=Avg('rating'))['average_top3_rating']
@@ -870,8 +873,8 @@ class AggregateTestCase(TestCase):
 
     def test_ticket11881(self):
         """
-        Check that subqueries do not needlessly contain ORDER BY, SELECT FOR UPDATE
-        or select_related() stuff.
+        Subqueries do not needlessly contain ORDER BY, SELECT FOR UPDATE or
+        select_related() stuff.
         """
         qs = Book.objects.all().select_for_update().order_by(
             'pk').select_related('publisher').annotate(max_pk=Max('pk'))
@@ -906,7 +909,7 @@ class AggregateTestCase(TestCase):
         self.assertEqual(book['price_sum'], Decimal("99999.80"))
 
     def test_nonaggregate_aggregation_throws(self):
-        with six.assertRaisesRegex(self, TypeError, 'fail is not an aggregate expression'):
+        with self.assertRaisesMessage(TypeError, 'fail is not an aggregate expression'):
             Book.objects.aggregate(fail=F('price'))
 
     def test_nonfield_annotation(self):
@@ -918,7 +921,7 @@ class AggregateTestCase(TestCase):
         self.assertEqual(book.val, 2)
 
     def test_missing_output_field_raises_error(self):
-        with six.assertRaisesRegex(self, FieldError, 'Cannot resolve expression type, unknown output_field'):
+        with self.assertRaisesMessage(FieldError, 'Cannot resolve expression type, unknown output_field'):
             Book.objects.annotate(val=Max(2)).first()
 
     def test_annotation_expressions(self):
@@ -962,7 +965,7 @@ class AggregateTestCase(TestCase):
         self.assertEqual(p2, {'avg_price': Approximate(53.39, places=2)})
 
     def test_combine_different_types(self):
-        with six.assertRaisesRegex(self, FieldError, 'Expression contains mixed types. You must set output_field'):
+        with self.assertRaisesMessage(FieldError, 'Expression contains mixed types. You must set output_field'):
             Book.objects.annotate(sums=Sum('rating') + Sum('pages') + Sum('price')).get(pk=self.b4.pk)
 
         b1 = Book.objects.annotate(sums=Sum(F('rating') + F('pages') + F('price'),
@@ -978,11 +981,11 @@ class AggregateTestCase(TestCase):
         self.assertEqual(b3.sums, Approximate(Decimal("383.69"), places=2))
 
     def test_complex_aggregations_require_kwarg(self):
-        with six.assertRaisesRegex(self, TypeError, 'Complex annotations require an alias'):
+        with self.assertRaisesMessage(TypeError, 'Complex annotations require an alias'):
             Author.objects.annotate(Sum(F('age') + F('friends__age')))
-        with six.assertRaisesRegex(self, TypeError, 'Complex aggregates require an alias'):
+        with self.assertRaisesMessage(TypeError, 'Complex aggregates require an alias'):
             Author.objects.aggregate(Sum('age') / Count('age'))
-        with six.assertRaisesRegex(self, TypeError, 'Complex aggregates require an alias'):
+        with self.assertRaisesMessage(TypeError, 'Complex aggregates require an alias'):
             Author.objects.aggregate(Sum(1))
 
     def test_aggregate_over_complex_annotation(self):
@@ -1085,7 +1088,7 @@ class AggregateTestCase(TestCase):
         class MyMax(Max):
             def as_sql(self, compiler, connection):
                 self.set_source_expressions(self.get_source_expressions()[0:1])
-                return super(MyMax, self).as_sql(compiler, connection)
+                return super().as_sql(compiler, connection)
 
         with self.assertRaisesMessage(FieldError, "Cannot compute Max('id__max'): 'id__max' is an aggregate"):
             Book.objects.annotate(Max('id')).annotate(my_max=MyMax('id__max', 'price'))
@@ -1094,7 +1097,7 @@ class AggregateTestCase(TestCase):
         class MyMax(Max):
             def as_sql(self, compiler, connection):
                 self.set_source_expressions(self.get_source_expressions()[0:1])
-                return super(MyMax, self).as_sql(compiler, connection)
+                return super().as_sql(compiler, connection)
 
         with self.assertRaisesMessage(TypeError, 'Complex aggregates require an alias'):
             Book.objects.aggregate(MyMax('pages', 'price'))
@@ -1169,7 +1172,7 @@ class AggregateTestCase(TestCase):
             function = 'GREATEST'
 
             def as_sqlite(self, compiler, connection):
-                return super(Greatest, self).as_sql(compiler, connection, function='MAX')
+                return super().as_sql(compiler, connection, function='MAX')
 
         qs = Publisher.objects.annotate(
             price_or_median=Greatest(Avg('book__rating'), Avg('book__price'))

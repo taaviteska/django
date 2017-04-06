@@ -1,7 +1,6 @@
-from __future__ import unicode_literals
-
 import os
 
+from django.contrib.auth import validators
 from django.contrib.auth.models import User
 from django.contrib.auth.password_validation import (
     CommonPasswordValidator, MinimumLengthValidator, NumericPasswordValidator,
@@ -11,8 +10,9 @@ from django.contrib.auth.password_validation import (
     validate_password,
 )
 from django.core.exceptions import ValidationError
+from django.db import models
 from django.test import TestCase, override_settings
-from django.utils._os import upath
+from django.test.utils import isolate_apps
 
 
 @override_settings(AUTH_PASSWORD_VALIDATORS=[
@@ -97,9 +97,9 @@ class MinimumLengthValidatorTest(TestCase):
 
 class UserAttributeSimilarityValidatorTest(TestCase):
     def test_validate(self):
-        user = User.objects.create(
-            username='testclient', first_name='Test', last_name='Client', email='testclient@example.com',
-            password='sha1$6efc0$f93efe9fd7542f25a7be94871ea45aa95de57161',
+        user = User.objects.create_user(
+            username='testclient', password='password', email='testclient@example.com',
+            first_name='Test', last_name='Client',
         )
         expected_error = "The password is too similar to the %s."
 
@@ -120,10 +120,38 @@ class UserAttributeSimilarityValidatorTest(TestCase):
                 max_similarity=0.3,
             ).validate('testclient', user=user)
         self.assertEqual(cm.exception.messages, [expected_error % "first name"])
-
+        # max_similarity=1 doesn't allow passwords that are identical to the
+        # attribute's value.
+        with self.assertRaises(ValidationError) as cm:
+            UserAttributeSimilarityValidator(
+                user_attributes=['first_name'],
+                max_similarity=1,
+            ).validate(user.first_name, user=user)
+        self.assertEqual(cm.exception.messages, [expected_error % "first name"])
+        # max_similarity=0 rejects all passwords.
+        with self.assertRaises(ValidationError) as cm:
+            UserAttributeSimilarityValidator(
+                user_attributes=['first_name'],
+                max_similarity=0,
+            ).validate('XXX', user=user)
+        self.assertEqual(cm.exception.messages, [expected_error % "first name"])
+        # Passes validation.
         self.assertIsNone(
             UserAttributeSimilarityValidator(user_attributes=['first_name']).validate('testclient', user=user)
         )
+
+    @isolate_apps('auth_tests')
+    def test_validate_property(self):
+        class TestUser(models.Model):
+            pass
+
+            @property
+            def username(self):
+                return 'foobar'
+
+        with self.assertRaises(ValidationError) as cm:
+            UserAttributeSimilarityValidator().validate('foobar', user=TestUser()),
+        self.assertEqual(cm.exception.messages, ['The password is too similar to the username.'])
 
     def test_help_text(self):
         self.assertEqual(
@@ -142,7 +170,7 @@ class CommonPasswordValidatorTest(TestCase):
         self.assertEqual(cm.exception.messages, [expected_error])
 
     def test_validate_custom_list(self):
-        path = os.path.join(os.path.dirname(os.path.realpath(upath(__file__))), 'common-passwords-custom.txt')
+        path = os.path.join(os.path.dirname(os.path.realpath(__file__)), 'common-passwords-custom.txt')
         validator = CommonPasswordValidator(password_list_path=path)
         expected_error = "This password is too common."
         self.assertIsNone(validator.validate('a-safe-password'))
@@ -174,3 +202,29 @@ class NumericPasswordValidatorTest(TestCase):
             NumericPasswordValidator().get_help_text(),
             "Your password can't be entirely numeric."
         )
+
+
+class UsernameValidatorsTests(TestCase):
+    def test_unicode_validator(self):
+        valid_usernames = ['joe', 'René', 'ᴮᴵᴳᴮᴵᴿᴰ', 'أحمد']
+        invalid_usernames = [
+            "o'connell", "عبد ال",
+            "zerowidth\u200Bspace", "nonbreaking\u00A0space",
+            "en\u2013dash",
+        ]
+        v = validators.UnicodeUsernameValidator()
+        for valid in valid_usernames:
+            v(valid)
+        for invalid in invalid_usernames:
+            with self.assertRaises(ValidationError):
+                v(invalid)
+
+    def test_ascii_validator(self):
+        valid_usernames = ['glenn', 'GLEnN', 'jean-marc']
+        invalid_usernames = ["o'connell", 'Éric', 'jean marc', "أحمد"]
+        v = validators.ASCIIUsernameValidator()
+        for valid in valid_usernames:
+            v(valid)
+        for invalid in invalid_usernames:
+            with self.assertRaises(ValidationError):
+                v(invalid)

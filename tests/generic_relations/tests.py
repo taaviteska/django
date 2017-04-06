@@ -1,13 +1,11 @@
-from __future__ import unicode_literals
-
 from django import forms
 from django.contrib.contenttypes.forms import generic_inlineformset_factory
 from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import FieldError
-from django.db import IntegrityError
+from django.db import IntegrityError, models
 from django.db.models import Q
 from django.test import SimpleTestCase, TestCase
-from django.utils import six
+from django.test.utils import isolate_apps
 
 from .models import (
     AllowsNullGFK, Animal, Carrot, Comparison, ConcreteRelatedModel,
@@ -275,6 +273,11 @@ class GenericRelationsTests(TestCase):
         with self.assertRaisesMessage(ValueError, msg):
             self.bacon.tags.add(t1)
 
+    def test_add_rejects_wrong_instances(self):
+        msg = "'TaggedItem' instance expected, got <Animal: Lion>"
+        with self.assertRaisesMessage(TypeError, msg):
+            self.bacon.tags.add(self.lion)
+
     def test_set(self):
         bacon = Vegetable.objects.create(name="Bacon", is_yucky=False)
         fatty = bacon.tags.create(tag="fatty")
@@ -328,9 +331,9 @@ class GenericRelationsTests(TestCase):
         self.assertQuerysetEqual(bacon.tags.all(), [])
 
     def test_assign_with_queryset(self):
-        # Ensure that querysets used in reverse GFK assignments are pre-evaluated
-        # so their value isn't affected by the clearing operation in
-        # ManyRelatedManager.set() (#19816).
+        # Querysets used in reverse GFK assignments are pre-evaluated so their
+        # value isn't affected by the clearing operation
+        # in ManyRelatedManager.set() (#19816).
         bacon = Vegetable.objects.create(name="Bacon", is_yucky=False)
         bacon.tags.create(tag="fatty")
         bacon.tags.create(tag="salty")
@@ -343,8 +346,7 @@ class GenericRelationsTests(TestCase):
         self.assertEqual(1, qs.count())
 
     def test_generic_relation_related_name_default(self):
-        # Test that GenericRelation by default isn't usable from
-        # the reverse side.
+        # GenericRelation isn't usable from the reverse side by default.
         with self.assertRaises(FieldError):
             TaggedItem.objects.filter(vegetable__isnull=True)
 
@@ -490,7 +492,7 @@ id="id_generic_relations-taggeditem-content_type-object_id-1-id" /></p>""" % tag
 
     def test_subclasses_with_gen_rel(self):
         """
-        Test that concrete model subclasses with generic relations work
+        Concrete model subclasses with generic relations work
         correctly (ticket 11263).
         """
         granite = Rock.objects.create(name='granite', hardness=5)
@@ -525,8 +527,7 @@ id="id_generic_relations-taggeditem-content_type-object_id-1-id" /></p>""" % tag
     def test_get_or_create(self):
         # get_or_create should work with virtual fields (content_object)
         quartz = Mineral.objects.create(name="Quartz", hardness=7)
-        tag, created = TaggedItem.objects.get_or_create(tag="shiny",
-            defaults={'content_object': quartz})
+        tag, created = TaggedItem.objects.get_or_create(tag="shiny", defaults={'content_object': quartz})
         self.assertTrue(created)
         self.assertEqual(tag.tag, "shiny")
         self.assertEqual(tag.content_object.id, quartz.id)
@@ -535,13 +536,11 @@ id="id_generic_relations-taggeditem-content_type-object_id-1-id" /></p>""" % tag
         # update_or_create should work with virtual fields (content_object)
         quartz = Mineral.objects.create(name="Quartz", hardness=7)
         diamond = Mineral.objects.create(name="Diamond", hardness=7)
-        tag, created = TaggedItem.objects.update_or_create(tag="shiny",
-            defaults={'content_object': quartz})
+        tag, created = TaggedItem.objects.update_or_create(tag="shiny", defaults={'content_object': quartz})
         self.assertTrue(created)
         self.assertEqual(tag.content_object.id, quartz.id)
 
-        tag, created = TaggedItem.objects.update_or_create(tag="shiny",
-            defaults={'content_object': diamond})
+        tag, created = TaggedItem.objects.update_or_create(tag="shiny", defaults={'content_object': diamond})
         self.assertFalse(created)
         self.assertEqual(tag.content_object.id, diamond.id)
 
@@ -558,6 +557,28 @@ id="id_generic_relations-taggeditem-content_type-object_id-1-id" /></p>""" % tag
         quartz = Mineral(name="Quartz", hardness=7)
         with self.assertRaises(IntegrityError):
             TaggedItem.objects.create(tag="shiny", content_object=quartz)
+
+    def test_cache_invalidation_for_content_type_id(self):
+        # Create a Vegetable and Mineral with the same id.
+        new_id = max(Vegetable.objects.order_by('-id')[0].id,
+                     Mineral.objects.order_by('-id')[0].id) + 1
+        broccoli = Vegetable.objects.create(id=new_id, name="Broccoli")
+        diamond = Mineral.objects.create(id=new_id, name="Diamond", hardness=7)
+        tag = TaggedItem.objects.create(content_object=broccoli, tag="yummy")
+        tag.content_type = ContentType.objects.get_for_model(diamond)
+        self.assertEqual(tag.content_object, diamond)
+
+    def test_cache_invalidation_for_object_id(self):
+        broccoli = Vegetable.objects.create(name="Broccoli")
+        cauliflower = Vegetable.objects.create(name="Cauliflower")
+        tag = TaggedItem.objects.create(content_object=broccoli, tag="yummy")
+        tag.object_id = cauliflower.id
+        self.assertEqual(tag.content_object, cauliflower)
+
+    def test_assign_content_object_in_init(self):
+        spinach = Vegetable(name="spinach")
+        tag = TaggedItem(content_object=spinach)
+        self.assertEqual(tag.content_object, spinach)
 
 
 class CustomWidget(forms.TextInput):
@@ -581,6 +602,15 @@ class GenericInlineFormsetTest(TestCase):
         form = Formset().forms[0]
         self.assertIsInstance(form['tag'].field.widget, CustomWidget)
 
+    @isolate_apps('generic_relations')
+    def test_incorrect_content_type(self):
+        class BadModel(models.Model):
+            content_type = models.PositiveIntegerField()
+
+        msg = "fk_name 'generic_relations.BadModel.content_type' is not a ForeignKey to ContentType"
+        with self.assertRaisesMessage(Exception, msg):
+            generic_inlineformset_factory(BadModel, TaggedItemForm)
+
     def test_save_new_uses_form_save(self):
         """
         Regression for #16260: save_new should call form.save()
@@ -588,10 +618,9 @@ class GenericInlineFormsetTest(TestCase):
         class SaveTestForm(forms.ModelForm):
             def save(self, *args, **kwargs):
                 self.instance.saved_by = "custom method"
-                return super(SaveTestForm, self).save(*args, **kwargs)
+                return super().save(*args, **kwargs)
 
-        Formset = generic_inlineformset_factory(
-            ForProxyModelModel, fields='__all__', form=SaveTestForm)
+        Formset = generic_inlineformset_factory(ForProxyModelModel, fields='__all__', form=SaveTestForm)
 
         instance = ProxyRelatedModel.objects.create()
 
@@ -608,8 +637,7 @@ class GenericInlineFormsetTest(TestCase):
         self.assertEqual(new_obj.saved_by, "custom method")
 
     def test_save_new_for_proxy(self):
-        Formset = generic_inlineformset_factory(ForProxyModelModel,
-            fields='__all__', for_concrete_model=False)
+        Formset = generic_inlineformset_factory(ForProxyModelModel, fields='__all__', for_concrete_model=False)
 
         instance = ProxyRelatedModel.objects.create()
 
@@ -627,8 +655,7 @@ class GenericInlineFormsetTest(TestCase):
         self.assertEqual(new_obj.obj, instance)
 
     def test_save_new_for_concrete(self):
-        Formset = generic_inlineformset_factory(ForProxyModelModel,
-            fields='__all__', for_concrete_model=True)
+        Formset = generic_inlineformset_factory(ForProxyModelModel, fields='__all__', for_concrete_model=True)
 
         instance = ProxyRelatedModel.objects.create()
 
@@ -718,14 +745,11 @@ class ProxyRelatedModelTest(TestCase):
 
 
 class TestInitWithNoneArgument(SimpleTestCase):
-    def test_none_not_allowed(self):
-        # TaggedItem requires a content_type, initializing with None should
-        # raise a ValueError.
-        with six.assertRaisesRegex(self, ValueError,
-          'Cannot assign None: "TaggedItem.content_type" does not allow null values'):
-            TaggedItem(content_object=None)
 
     def test_none_allowed(self):
         # AllowsNullGFK doesn't require a content_type, so None argument should
         # also be allowed.
         AllowsNullGFK(content_object=None)
+        # TaggedItem requires a content_type but initializing with None should
+        # be allowed.
+        TaggedItem(content_object=None)

@@ -6,8 +6,10 @@ import sys
 import tempfile
 import unittest
 from datetime import timedelta
+from http import cookies
 
 from django.conf import settings
+from django.contrib.sessions.backends.base import UpdateError
 from django.contrib.sessions.backends.cache import SessionStore as CacheSession
 from django.contrib.sessions.backends.cached_db import \
     SessionStore as CacheDBSession
@@ -24,20 +26,18 @@ from django.contrib.sessions.serializers import (
 from django.core import management
 from django.core.cache import caches
 from django.core.cache.backends.base import InvalidCacheBackendError
-from django.core.exceptions import ImproperlyConfigured
+from django.core.exceptions import ImproperlyConfigured, SuspiciousOperation
 from django.http import HttpResponse
 from django.test import (
     RequestFactory, TestCase, ignore_warnings, override_settings,
 )
 from django.test.utils import patch_logger
-from django.utils import six, timezone
-from django.utils.encoding import force_text
-from django.utils.six.moves import http_cookies
+from django.utils import timezone
 
-from .custom_db_backend import SessionStore as CustomDatabaseSession
+from .models import SessionStore as CustomDatabaseSession
 
 
-class SessionTestsMixin(object):
+class SessionTestsMixin:
     # This does not inherit from TestCase to avoid any tests being run with this
     # class, which wouldn't work, and to allow different TestCase subclasses to
     # be used.
@@ -58,7 +58,7 @@ class SessionTestsMixin(object):
         self.assertFalse(self.session.accessed)
 
     def test_get_empty(self):
-        self.assertEqual(self.session.get('cat'), None)
+        self.assertIsNone(self.session.get('cat'))
 
     def test_store(self):
         self.session['cat'] = "dog"
@@ -74,13 +74,22 @@ class SessionTestsMixin(object):
         self.assertEqual(self.session.pop('some key'), 'exists')
         self.assertTrue(self.session.accessed)
         self.assertTrue(self.session.modified)
-        self.assertEqual(self.session.get('some key'), None)
+        self.assertIsNone(self.session.get('some key'))
 
     def test_pop_default(self):
         self.assertEqual(self.session.pop('some key', 'does not exist'),
                          'does not exist')
         self.assertTrue(self.session.accessed)
         self.assertFalse(self.session.modified)
+
+    def test_pop_default_named_argument(self):
+        self.assertEqual(self.session.pop('some key', default='does not exist'), 'does not exist')
+        self.assertTrue(self.session.accessed)
+        self.assertFalse(self.session.modified)
+
+    def test_pop_no_default_keyerror_raised(self):
+        with self.assertRaises(KeyError):
+            self.session.pop('some key')
 
     def test_setdefault(self):
         self.assertEqual(self.session.setdefault('foo', 'bar'), 'bar')
@@ -106,37 +115,27 @@ class SessionTestsMixin(object):
         self.assertEqual(list(self.session.values()), [])
         self.assertTrue(self.session.accessed)
         self.session['some key'] = 1
+        self.session.modified = False
+        self.session.accessed = False
         self.assertEqual(list(self.session.values()), [1])
+        self.assertTrue(self.session.accessed)
+        self.assertFalse(self.session.modified)
 
-    def test_iterkeys(self):
+    def test_keys(self):
         self.session['x'] = 1
         self.session.modified = False
         self.session.accessed = False
-        i = six.iterkeys(self.session)
-        self.assertTrue(hasattr(i, '__iter__'))
+        self.assertEqual(list(self.session.keys()), ['x'])
         self.assertTrue(self.session.accessed)
         self.assertFalse(self.session.modified)
-        self.assertEqual(list(i), ['x'])
 
-    def test_itervalues(self):
+    def test_items(self):
         self.session['x'] = 1
         self.session.modified = False
         self.session.accessed = False
-        i = six.itervalues(self.session)
-        self.assertTrue(hasattr(i, '__iter__'))
+        self.assertEqual(list(self.session.items()), [('x', 1)])
         self.assertTrue(self.session.accessed)
         self.assertFalse(self.session.modified)
-        self.assertEqual(list(i), [1])
-
-    def test_iteritems(self):
-        self.session['x'] = 1
-        self.session.modified = False
-        self.session.accessed = False
-        i = six.iteritems(self.session)
-        self.assertTrue(hasattr(i, '__iter__'))
-        self.assertTrue(self.session.accessed)
-        self.assertFalse(self.session.modified)
-        self.assertEqual(list(i), [('x', 1)])
 
     def test_clear(self):
         self.session['x'] = 1
@@ -149,9 +148,6 @@ class SessionTestsMixin(object):
         self.assertTrue(self.session.modified)
 
     def test_save(self):
-        if (hasattr(self.session, '_cache') and 'DummyCache' in
-                settings.CACHES[settings.SESSION_CACHE_ALIAS]['BACKEND']):
-            raise unittest.SkipTest("Session saving tests require a real cache backend")
         self.session.save()
         self.assertTrue(self.session.exists(self.session.session_key))
 
@@ -177,8 +173,13 @@ class SessionTestsMixin(object):
         prev_key = self.session.session_key
         prev_data = list(self.session.items())
         self.session.cycle_key()
+        self.assertFalse(self.session.exists(prev_key))
         self.assertNotEqual(self.session.session_key, prev_key)
         self.assertEqual(list(self.session.items()), prev_data)
+
+    def test_cycle_with_no_session_cache(self):
+        self.assertFalse(hasattr(self.session, '_session_cache'))
+        self.session.cycle_key()
 
     def test_save_doesnt_clear_data(self):
         self.session['a'] = 'b'
@@ -190,15 +191,9 @@ class SessionTestsMixin(object):
         # removed the key) results in a new key being generated.
         try:
             session = self.backend('1')
-            try:
-                session.save()
-            except AttributeError:
-                self.fail(
-                    "The session object did not save properly. "
-                    "Middleware may be saving cache items without namespaces."
-                )
+            session.save()
             self.assertNotEqual(session.session_key, '1')
-            self.assertEqual(session.get('cat'), None)
+            self.assertIsNone(session.get('cat'))
             session.delete()
         finally:
             # Some backends leave a stale cache entry for the invalid
@@ -223,7 +218,8 @@ class SessionTestsMixin(object):
     def test_session_key_is_read_only(self):
         def set_session_key(session):
             session.session_key = session._get_new_session_key()
-        self.assertRaises(AttributeError, set_session_key, self.session)
+        with self.assertRaises(AttributeError):
+            set_session_key(self.session)
 
     # Custom session expiry
     def test_default_expiry(self):
@@ -344,14 +340,34 @@ class SessionTestsMixin(object):
 
         Creating session records on load is a DOS vulnerability.
         """
-        if self.backend is CookieSession:
-            raise unittest.SkipTest("Cookie backend doesn't have an external store to create records in.")
         session = self.backend('someunknownkey')
         session.load()
 
         self.assertFalse(session.exists(session.session_key))
         # provided unknown key was cycled, not reused
         self.assertNotEqual(session.session_key, 'someunknownkey')
+
+    def test_session_save_does_not_resurrect_session_logged_out_in_other_context(self):
+        """
+        Sessions shouldn't be resurrected by a concurrent request.
+        """
+        # Create new session.
+        s1 = self.backend()
+        s1['test_data'] = 'value1'
+        s1.save(must_create=True)
+
+        # Logout in another context.
+        s2 = self.backend(s1.session_key)
+        s2.delete()
+
+        # Modify session in first context.
+        s1['test_data'] = 'value2'
+        with self.assertRaises(UpdateError):
+            # This should throw an exception as the session is deleted, not
+            # resurrect the session.
+            s1.save()
+
+        self.assertEqual(s1.load(), {})
 
 
 class DatabaseSessionTests(SessionTestsMixin, TestCase):
@@ -371,7 +387,7 @@ class DatabaseSessionTests(SessionTestsMixin, TestCase):
         session_key = self.session.session_key
         s = self.model.objects.get(session_key=session_key)
 
-        self.assertEqual(force_text(s), session_key)
+        self.assertEqual(str(s), session_key)
 
     def test_session_get_decoded(self):
         """
@@ -432,7 +448,7 @@ class DatabaseSessionWithTimeZoneTests(DatabaseSessionTests):
 
 class CustomDatabaseSessionTests(DatabaseSessionTests):
     backend = CustomDatabaseSession
-    session_engine = 'sessions_tests.custom_db_backend'
+    session_engine = 'sessions_tests.models'
 
     def test_extra_session_field(self):
         # Set the account ID to be picked up by a custom session storage
@@ -450,16 +466,13 @@ class CustomDatabaseSessionTests(DatabaseSessionTests):
 
         # Make sure that save() on an existing session did the right job.
         s = self.model.objects.get(session_key=self.session.session_key)
-        self.assertEqual(s.account_id, None)
+        self.assertIsNone(s.account_id)
 
 
 class CacheDBSessionTests(SessionTestsMixin, TestCase):
 
     backend = CacheDBSession
 
-    @unittest.skipIf('DummyCache' in
-        settings.CACHES[settings.SESSION_CACHE_ALIAS]['BACKEND'],
-        "Session saving tests require a real cache backend")
     def test_exists_searches_cache_first(self):
         self.session.save()
         with self.assertNumQueries(0):
@@ -474,7 +487,8 @@ class CacheDBSessionTests(SessionTestsMixin, TestCase):
     @override_settings(SESSION_CACHE_ALIAS='sessions')
     def test_non_default_cache(self):
         # 21000 - CacheDB backend should respect SESSION_CACHE_ALIAS.
-        self.assertRaises(InvalidCacheBackendError, self.backend)
+        with self.assertRaises(InvalidCacheBackendError):
+            self.backend()
 
 
 @override_settings(USE_TZ=True)
@@ -494,10 +508,10 @@ class FileSessionTests(SessionTestsMixin, unittest.TestCase):
         # Reset the file session backend's internal caches
         if hasattr(self.backend, '_storage_path'):
             del self.backend._storage_path
-        super(FileSessionTests, self).setUp()
+        super().setUp()
 
     def tearDown(self):
-        super(FileSessionTests, self).tearDown()
+        super().tearDown()
         settings.SESSION_FILE_PATH = self.original_session_file_path
         shutil.rmtree(self.temp_session_store)
 
@@ -506,20 +520,21 @@ class FileSessionTests(SessionTestsMixin, unittest.TestCase):
     def test_configuration_check(self):
         del self.backend._storage_path
         # Make sure the file backend checks for a good storage dir
-        self.assertRaises(ImproperlyConfigured, self.backend)
+        with self.assertRaises(ImproperlyConfigured):
+            self.backend()
 
     def test_invalid_key_backslash(self):
         # Ensure we don't allow directory-traversal.
         # This is tested directly on _key_to_file, as load() will swallow
         # a SuspiciousOperation in the same way as an IOError - by creating
         # a new session, making it unclear whether the slashes were detected.
-        self.assertRaises(InvalidSessionKey,
-                          self.backend()._key_to_file, "a\\b\\c")
+        with self.assertRaises(InvalidSessionKey):
+            self.backend()._key_to_file("a\\b\\c")
 
     def test_invalid_key_forwardslash(self):
         # Ensure we don't allow directory-traversal
-        self.assertRaises(InvalidSessionKey,
-                          self.backend()._key_to_file, "a/b/c")
+        with self.assertRaises(InvalidSessionKey):
+            self.backend()._key_to_file("a/b/c")
 
     @override_settings(
         SESSION_ENGINE="django.contrib.sessions.backends.file",
@@ -533,8 +548,10 @@ class FileSessionTests(SessionTestsMixin, unittest.TestCase):
         file_prefix = settings.SESSION_COOKIE_NAME
 
         def count_sessions():
-            return len([session_file for session_file in os.listdir(storage_path)
-                if session_file.startswith(file_prefix)])
+            return len([
+                session_file for session_file in os.listdir(storage_path)
+                if session_file.startswith(file_prefix)
+            ])
 
         self.assertEqual(0, count_sessions())
 
@@ -575,7 +592,7 @@ class CacheSessionTests(SessionTestsMixin, unittest.TestCase):
 
     def test_default_cache(self):
         self.session.save()
-        self.assertNotEqual(caches['default'].get(self.session.cache_key), None)
+        self.assertIsNotNone(caches['default'].get(self.session.cache_key))
 
     @override_settings(CACHES={
         'default': {
@@ -591,8 +608,14 @@ class CacheSessionTests(SessionTestsMixin, unittest.TestCase):
         self.session = self.backend()
 
         self.session.save()
-        self.assertEqual(caches['default'].get(self.session.cache_key), None)
-        self.assertNotEqual(caches['sessions'].get(self.session.cache_key), None)
+        self.assertIsNone(caches['default'].get(self.session.cache_key))
+        self.assertIsNotNone(caches['sessions'].get(self.session.cache_key))
+
+    def test_create_and_save(self):
+        self.session = self.backend()
+        self.session.create()
+        self.session.save()
+        self.assertIsNotNone(caches['default'].get(self.session.cache_key))
 
 
 class SessionMiddlewareTests(TestCase):
@@ -626,8 +649,10 @@ class SessionMiddlewareTests(TestCase):
         response = middleware.process_response(request, response)
         self.assertTrue(
             response.cookies[settings.SESSION_COOKIE_NAME]['httponly'])
-        self.assertIn(http_cookies.Morsel._reserved['httponly'],
-            str(response.cookies[settings.SESSION_COOKIE_NAME]))
+        self.assertIn(
+            cookies.Morsel._reserved['httponly'],
+            str(response.cookies[settings.SESSION_COOKIE_NAME])
+        )
 
     @override_settings(SESSION_COOKIE_HTTPONLY=False)
     def test_no_httponly_session_cookie(self):
@@ -643,7 +668,7 @@ class SessionMiddlewareTests(TestCase):
         response = middleware.process_response(request, response)
         self.assertFalse(response.cookies[settings.SESSION_COOKIE_NAME]['httponly'])
 
-        self.assertNotIn(http_cookies.Morsel._reserved['httponly'],
+        self.assertNotIn(cookies.Morsel._reserved['httponly'],
                          str(response.cookies[settings.SESSION_COOKIE_NAME]))
 
     def test_session_save_on_500(self):
@@ -659,8 +684,28 @@ class SessionMiddlewareTests(TestCase):
         # Handle the response through the middleware
         response = middleware.process_response(request, response)
 
-        # Check that the value wasn't saved above.
+        # The value wasn't saved above.
         self.assertNotIn('hello', request.session.load())
+
+    def test_session_update_error_redirect(self):
+        path = '/foo/'
+        request = RequestFactory().get(path)
+        response = HttpResponse()
+        middleware = SessionMiddleware()
+
+        request.session = DatabaseSession()
+        request.session.save(must_create=True)
+        request.session.delete()
+
+        msg = (
+            "The request's session was deleted before the request completed. "
+            "The user may have logged out in a concurrent request, for example."
+        )
+        with self.assertRaisesMessage(SuspiciousOperation, msg):
+            # Handle the response through the middleware. It will try to save
+            # the deleted session which will cause an UpdateError that's caught
+            # and raised as a SuspiciousOperation.
+            middleware.process_response(request, response)
 
     def test_session_delete_on_end(self):
         request = RequestFactory().get('/')
@@ -677,7 +722,7 @@ class SessionMiddlewareTests(TestCase):
         # Handle the response through the middleware
         response = middleware.process_response(request, response)
 
-        # Check that the cookie was deleted, not recreated.
+        # The cookie was deleted, not recreated.
         # A deleted cookie header looks like:
         #  Set-Cookie: sessionid=; expires=Thu, 01-Jan-1970 00:00:00 GMT; Max-Age=0; Path=/
         self.assertEqual(
@@ -689,8 +734,8 @@ class SessionMiddlewareTests(TestCase):
             str(response.cookies[settings.SESSION_COOKIE_NAME])
         )
 
-    @override_settings(SESSION_COOKIE_DOMAIN='.example.local')
-    def test_session_delete_on_end_with_custom_domain(self):
+    @override_settings(SESSION_COOKIE_DOMAIN='.example.local', SESSION_COOKIE_PATH='/example/')
+    def test_session_delete_on_end_with_custom_domain_and_path(self):
         request = RequestFactory().get('/')
         response = HttpResponse('Session test')
         middleware = SessionMiddleware()
@@ -705,13 +750,14 @@ class SessionMiddlewareTests(TestCase):
         # Handle the response through the middleware
         response = middleware.process_response(request, response)
 
-        # Check that the cookie was deleted, not recreated.
-        # A deleted cookie header with a custom domain looks like:
+        # The cookie was deleted, not recreated.
+        # A deleted cookie header with a custom domain and path looks like:
         #  Set-Cookie: sessionid=; Domain=.example.local;
-        #              expires=Thu, 01-Jan-1970 00:00:00 GMT; Max-Age=0; Path=/
+        #              expires=Thu, 01-Jan-1970 00:00:00 GMT; Max-Age=0;
+        #              Path=/example/
         self.assertEqual(
             'Set-Cookie: {}={}; Domain=.example.local; expires=Thu, '
-            '01-Jan-1970 00:00:00 GMT; Max-Age=0; Path=/'.format(
+            '01-Jan-1970 00:00:00 GMT; Max-Age=0; Path=/example/'.format(
                 settings.SESSION_COOKIE_NAME,
                 '""' if sys.version_info >= (3, 5) else '',
             ),
@@ -799,7 +845,7 @@ class CookieSessionTests(SessionTestsMixin, unittest.TestCase):
     @unittest.expectedFailure
     def test_actual_expiry(self):
         # The cookie backend doesn't handle non-default expiry dates, see #19201
-        super(CookieSessionTests, self).test_actual_expiry()
+        super().test_actual_expiry()
 
     def test_unpickling_exception(self):
         # signed_cookies backend should handle unpickle exceptions gracefully
@@ -809,3 +855,11 @@ class CookieSessionTests(SessionTestsMixin, unittest.TestCase):
 
         self.session.serializer = PickleSerializer
         self.session.load()
+
+    @unittest.skip("Cookie backend doesn't have an external store to create records in.")
+    def test_session_load_does_not_create_record(self):
+        pass
+
+    @unittest.skip("CookieSession is stored in the client and there is no way to query it.")
+    def test_session_save_does_not_resurrect_session_logged_out_in_other_context(self):
+        pass

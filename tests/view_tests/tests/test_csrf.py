@@ -6,16 +6,16 @@ from django.utils.translation import override
 from django.views.csrf import CSRF_FAILURE_TEMPLATE_NAME, csrf_failure
 
 
-@override_settings(ROOT_URLCONF="view_tests.urls")
+@override_settings(ROOT_URLCONF='view_tests.urls')
 class CsrfViewTests(SimpleTestCase):
 
     def setUp(self):
-        super(CsrfViewTests, self).setUp()
+        super().setUp()
         self.client = Client(enforce_csrf_checks=True)
 
     @override_settings(
         USE_I18N=True,
-        MIDDLEWARE_CLASSES=[
+        MIDDLEWARE=[
             'django.middleware.locale.LocaleMiddleware',
             'django.middleware.common.CommonMiddleware',
             'django.middleware.csrf.CsrfViewMiddleware',
@@ -23,7 +23,7 @@ class CsrfViewTests(SimpleTestCase):
     )
     def test_translation(self):
         """
-        Test that an invalid request is rejected with a localized error message.
+        An invalid request is rejected with a localized error message.
         """
         response = self.client.post('/')
         self.assertContains(response, "Forbidden", status_code=403)

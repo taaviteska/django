@@ -1,14 +1,16 @@
+from unittest import mock
+
 from django.db import connections, models
-from django.test import TestCase, mock
+from django.test import TestCase
 from django.test.utils import isolate_apps, override_settings
 
 
-class TestRouter(object):
+class TestRouter:
     """
     Routes to the 'other' database if the model name starts with 'Other'.
     """
-    def allow_migrate(self, db, app_label, model=None, **hints):
-        return db == ('other' if model._meta.verbose_name.startswith('other') else 'default')
+    def allow_migrate(self, db, app_label, model_name=None, **hints):
+        return db == ('other' if model_name.startswith('other') else 'default')
 
 
 @override_settings(DATABASE_ROUTERS=[TestRouter()])

@@ -7,7 +7,7 @@ class Author(models.Model):
     dob = models.DateField()
 
     def __init__(self, *args, **kwargs):
-        super(Author, self).__init__(*args, **kwargs)
+        super().__init__(*args, **kwargs)
         # Protect against annotations being passed to __init__ --
         # this'll make the test suite get angry if annotations aren't
         # treated differently than fields.
@@ -29,6 +29,7 @@ class BookFkAsPk(models.Model):
 
 class Coffee(models.Model):
     brand = models.CharField(max_length=255, db_column="name")
+    price = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
 
 class Reviewer(models.Model):

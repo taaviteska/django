@@ -1,5 +1,4 @@
-from __future__ import unicode_literals
-
+import functools
 import re
 import sys
 import types
@@ -9,26 +8,27 @@ from django.http import HttpResponse, HttpResponseNotFound
 from django.template import Context, Engine, TemplateDoesNotExist
 from django.template.defaultfilters import force_escape, pprint
 from django.urls import Resolver404, resolve
-from django.utils import lru_cache, six, timezone
+from django.utils import timezone
 from django.utils.datastructures import MultiValueDict
-from django.utils.encoding import force_bytes, smart_text
+from django.utils.encoding import force_text
 from django.utils.module_loading import import_string
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 # Minimal Django templates engine to render the error templates
 # regardless of the project's TEMPLATES setting.
 DEBUG_ENGINE = Engine(debug=True)
 
-HIDDEN_SETTINGS = re.compile('API|TOKEN|KEY|SECRET|PASS|SIGNATURE')
+HIDDEN_SETTINGS = re.compile('API|TOKEN|KEY|SECRET|PASS|SIGNATURE', flags=re.IGNORECASE)
 
 CLEANSED_SUBSTITUTE = '********************'
 
 
-class CallableSettingWrapper(object):
-    """ Object to wrap callable appearing in settings
-
+class CallableSettingWrapper:
+    """
+    Object to wrap callable appearing in settings.
     * Not to call in the debug page (#21345).
-    * Not to break the debug page if the callable forbidding to set attributes (#23070).
+    * Not to break the debug page if the callable forbidding to set attributes
+      (#23070).
     """
     def __init__(self, callable_setting):
         self._wrapped = callable_setting
@@ -38,10 +38,9 @@ class CallableSettingWrapper(object):
 
 
 def cleanse_setting(key, value):
-    """Cleanse an individual setting key/value of sensitive content.
-
-    If the value is a dictionary, recursively cleanse the keys in
-    that dictionary.
+    """
+    Cleanse an individual setting key/value of sensitive content. If the value
+    is a dictionary, recursively cleanse the keys in that dictionary.
     """
     try:
         if HIDDEN_SETTINGS.search(key):
@@ -63,7 +62,10 @@ def cleanse_setting(key, value):
 
 
 def get_safe_settings():
-    "Returns a dictionary of the settings module, with sensitive settings blurred out."
+    """
+    Return a dictionary of the settings module with values of sensitive
+    settings replaced with stars (*********).
+    """
     settings_dict = {}
     for k in dir(settings):
         if k.isupper():
@@ -85,7 +87,7 @@ def technical_500_response(request, exc_type, exc_value, tb, status_code=500):
         return HttpResponse(html, status=status_code, content_type='text/html')
 
 
-@lru_cache.lru_cache()
+@functools.lru_cache()
 def get_default_exception_reporter_filter():
     # Instantiate the default filter for the first time and cache it.
     return import_string(settings.DEFAULT_EXCEPTION_REPORTER_FILTER)()
@@ -96,7 +98,7 @@ def get_exception_reporter_filter(request):
     return getattr(request, 'exception_reporter_filter', default_filter)
 
 
-class ExceptionReporterFilter(object):
+class ExceptionReporterFilter:
     """
     Base for all exception reporter filter classes. All overridable hooks
     contain lenient default behaviors.
@@ -129,7 +131,7 @@ class SafeExceptionReporterFilter(ExceptionReporterFilter):
 
     def get_cleansed_multivaluedict(self, request, multivaluedict):
         """
-        Replaces the keys in a MultiValueDict marked as sensitive with stars.
+        Replace the keys in a MultiValueDict marked as sensitive with stars.
         This mitigates leaking sensitive POST parameters if something like
         request.POST['nonexistent_key'] throws an exception (#21098).
         """
@@ -143,7 +145,7 @@ class SafeExceptionReporterFilter(ExceptionReporterFilter):
 
     def get_post_parameters(self, request):
         """
-        Replaces the values of POST parameters marked as sensitive with
+        Replace the values of POST parameters marked as sensitive with
         stars (*********).
         """
         if request is None:
@@ -182,7 +184,7 @@ class SafeExceptionReporterFilter(ExceptionReporterFilter):
 
     def get_traceback_frame_variables(self, request, tb_frame):
         """
-        Replaces the values of variables marked as sensitive with
+        Replace the values of variables marked as sensitive with
         stars (*********).
         """
         # Loop through the frame's callers to see if the sensitive_variables
@@ -190,8 +192,8 @@ class SafeExceptionReporterFilter(ExceptionReporterFilter):
         current_frame = tb_frame.f_back
         sensitive_variables = None
         while current_frame is not None:
-            if (current_frame.f_code.co_name == 'sensitive_variables_wrapper'
-                    and 'sensitive_variables_wrapper' in current_frame.f_locals):
+            if (current_frame.f_code.co_name == 'sensitive_variables_wrapper' and
+                    'sensitive_variables_wrapper' in current_frame.f_locals):
                 # The sensitive_variables decorator was used, so we take note
                 # of the sensitive variables' names.
                 wrapper = current_frame.f_locals['sensitive_variables_wrapper']
@@ -219,8 +221,8 @@ class SafeExceptionReporterFilter(ExceptionReporterFilter):
             for name, value in tb_frame.f_locals.items():
                 cleansed[name] = self.cleanse_special_types(request, value)
 
-        if (tb_frame.f_code.co_name == 'sensitive_variables_wrapper'
-                and 'sensitive_variables_wrapper' in tb_frame.f_locals):
+        if (tb_frame.f_code.co_name == 'sensitive_variables_wrapper' and
+                'sensitive_variables_wrapper' in tb_frame.f_locals):
             # For good measure, obfuscate the decorated function's arguments in
             # the sensitive_variables decorator's frame, in case the variables
             # associated with those arguments were meant to be obfuscated from
@@ -231,10 +233,8 @@ class SafeExceptionReporterFilter(ExceptionReporterFilter):
         return cleansed.items()
 
 
-class ExceptionReporter(object):
-    """
-    A class to organize and coordinate reporting on exceptions.
-    """
+class ExceptionReporter:
+    """Organize and coordinate reporting on exceptions."""
     def __init__(self, request, exc_type, exc_value, tb, is_email=False):
         self.request = request
         self.filter = get_exception_reporter_filter(self.request)
@@ -246,11 +246,6 @@ class ExceptionReporter(object):
         self.template_info = getattr(self.exc_value, 'template_debug', None)
         self.template_does_not_exist = False
         self.postmortem = None
-
-        # Handle deprecated string exceptions
-        if isinstance(self.exc_type, six.string_types):
-            self.exc_value = Exception('Deprecated String Exception: %r' % self.exc_type)
-            self.exc_type = type(self.exc_value)
 
     def get_traceback_data(self):
         """Return a dictionary containing traceback information."""
@@ -264,9 +259,6 @@ class ExceptionReporter(object):
                 frame_vars = []
                 for k, v in frame['vars']:
                     v = pprint(v)
-                    # The force_escape filter assume unicode, make sure that works
-                    if isinstance(v, six.binary_type):
-                        v = v.decode('utf-8', 'replace')  # don't choke on non-utf-8 input
                     # Trim large blobs of data
                     if len(v) > 4096:
                         v = '%s... <trimmed %d bytes string>' % (v[0:4096], len(v))
@@ -280,17 +272,29 @@ class ExceptionReporter(object):
             end = getattr(self.exc_value, 'end', None)
             if start is not None and end is not None:
                 unicode_str = self.exc_value.args[1]
-                unicode_hint = smart_text(
+                unicode_hint = force_text(
                     unicode_str[max(start - 5, 0):min(end + 5, len(unicode_str))],
                     'ascii', errors='replace'
                 )
         from django import get_version
+
+        if self.request is None:
+            user_str = None
+        else:
+            try:
+                user_str = force_text(self.request.user)
+            except Exception:
+                # request.user may raise OperationalError if the database is
+                # unavailable, for example.
+                user_str = '[unable to retrieve the current user]'
+
         c = {
             'is_email': self.is_email,
             'unicode_hint': unicode_hint,
             'frames': frames,
             'request': self.request,
-            'filtered_POST': self.filter.get_post_parameters(self.request),
+            'user_str': user_str,
+            'filtered_POST_items': self.filter.get_post_parameters(self.request).items(),
             'settings': get_safe_settings(),
             'sys_executable': sys.executable,
             'sys_version_info': '%d.%d.%d' % sys.version_info[0:3],
@@ -301,31 +305,35 @@ class ExceptionReporter(object):
             'template_does_not_exist': self.template_does_not_exist,
             'postmortem': self.postmortem,
         }
+        if self.request is not None:
+            c['request_GET_items'] = self.request.GET.items()
+            c['request_FILES_items'] = self.request.FILES.items()
+            c['request_COOKIES_items'] = self.request.COOKIES.items()
         # Check whether exception info is available
         if self.exc_type:
             c['exception_type'] = self.exc_type.__name__
         if self.exc_value:
-            c['exception_value'] = smart_text(self.exc_value, errors='replace')
+            c['exception_value'] = force_text(self.exc_value, errors='replace')
         if frames:
             c['lastframe'] = frames[-1]
         return c
 
     def get_traceback_html(self):
-        "Return HTML version of debug 500 HTTP error page."
+        """Return HTML version of debug 500 HTTP error page."""
         t = DEBUG_ENGINE.from_string(TECHNICAL_500_TEMPLATE)
         c = Context(self.get_traceback_data(), use_l10n=False)
         return t.render(c)
 
     def get_traceback_text(self):
-        "Return plain text version of debug 500 HTTP error page."
+        """Return plain text version of debug 500 HTTP error page."""
         t = DEBUG_ENGINE.from_string(TECHNICAL_500_TEXT_TEMPLATE)
         c = Context(self.get_traceback_data(), autoescape=False, use_l10n=False)
         return t.render(c)
 
     def _get_lines_from_file(self, filename, lineno, context_lines, loader=None, module_name=None):
         """
-        Returns context_lines before and after lineno from file.
-        Returns (pre_context_lineno, pre_context, context_line, post_context).
+        Return context_lines before and after lineno from file.
+        Return (pre_context_lineno, pre_context, context_line, post_context).
         """
         source = None
         if loader is not None and hasattr(loader, "get_source"):
@@ -345,9 +353,9 @@ class ExceptionReporter(object):
             return None, [], None, []
 
         # If we just read the source from a file, or if the loader did not
-        # apply tokenize.detect_encoding to decode the source into a Unicode
+        # apply tokenize.detect_encoding to decode the source into a
         # string, then we should do that ourselves.
-        if isinstance(source[0], six.binary_type):
+        if isinstance(source[0], bytes):
             encoding = 'ascii'
             for line in source[:2]:
                 # File coding may be specified. Match pattern from PEP-263
@@ -356,7 +364,7 @@ class ExceptionReporter(object):
                 if match:
                     encoding = match.group(1).decode('ascii')
                     break
-            source = [six.text_type(sline, encoding, 'replace') for sline in source]
+            source = [str(sline, encoding, 'replace') for sline in source]
 
         lower_bound = max(0, lineno - context_lines)
         upper_bound = lineno + context_lines
@@ -385,11 +393,9 @@ class ExceptionReporter(object):
         if not exceptions:
             return frames
 
-        # In case there's just one exception (always in Python 2,
-        # sometimes in Python 3), take the traceback from self.tb (Python 2
-        # doesn't have a __traceback__ attribute on Exception)
+        # In case there's just one exception, take the traceback from self.tb
         exc_value = exceptions.pop()
-        tb = self.tb if six.PY2 or not exceptions else exc_value.__traceback__
+        tb = self.tb if not exceptions else exc_value.__traceback__
 
         while tb is not None:
             # Support for __traceback_hide__ which is used by a few libraries
@@ -424,9 +430,7 @@ class ExceptionReporter(object):
 
             # If the traceback for current exception is consumed, try the
             # other exception.
-            if six.PY2:
-                tb = tb.tb_next
-            elif not tb.tb_next and exceptions:
+            if not tb.tb_next and exceptions:
                 exc_value = exceptions.pop()
                 tb = exc_value.__traceback__
             else:
@@ -434,21 +438,9 @@ class ExceptionReporter(object):
 
         return frames
 
-    def format_exception(self):
-        """
-        Return the same data as from traceback.format_exception.
-        """
-        import traceback
-        frames = self.get_traceback_frames()
-        tb = [(f['filename'], f['lineno'], f['function'], f['context_line']) for f in frames]
-        list = ['Traceback (most recent call last):\n']
-        list += traceback.format_list(tb)
-        list += traceback.format_exception_only(self.exc_type, self.exc_value)
-        return list
-
 
 def technical_404_response(request, exception):
-    "Create a technical 404 error response. The exception should be the Http404."
+    """Create a technical 404 error response. `exception` is the Http404."""
     try:
         error_url = exception.args[0]['path']
     except (IndexError, TypeError, KeyError):
@@ -459,11 +451,12 @@ def technical_404_response(request, exception):
     except (IndexError, TypeError, KeyError):
         tried = []
     else:
-        if (not tried                           # empty URLconf
-            or (request.path == '/'
-                and len(tried) == 1             # default URLconf
-                and len(tried[0]) == 1
-                and getattr(tried[0][0], 'app_name', '') == getattr(tried[0][0], 'namespace', '') == 'admin')):
+        if (not tried or (                  # empty URLconf
+            request.path == '/' and
+            len(tried) == 1 and             # default URLconf
+            len(tried[0]) == 1 and
+            getattr(tried[0][0], 'app_name', '') == getattr(tried[0][0], 'namespace', '') == 'admin'
+        )):
             return default_urlconf(request)
 
     urlconf = getattr(request, 'urlconf', settings.ROOT_URLCONF)
@@ -493,7 +486,7 @@ def technical_404_response(request, exception):
         'root_urlconf': settings.ROOT_URLCONF,
         'request_path': error_url,
         'urlpatterns': tried,
-        'reason': force_bytes(exception, errors='replace'),
+        'reason': str(exception),
         'request': request,
         'settings': get_safe_settings(),
         'raising_view_name': caller,
@@ -502,19 +495,23 @@ def technical_404_response(request, exception):
 
 
 def default_urlconf(request):
-    "Create an empty URLconf 404 error response."
+    """Create an empty URLconf 404 error response."""
     t = DEBUG_ENGINE.from_string(DEFAULT_URLCONF_TEMPLATE)
     c = Context({
         "title": _("Welcome to Django"),
         "heading": _("It worked!"),
         "subheading": _("Congratulations on your first Django-powered page."),
-        "instructions": _("Of course, you haven't actually done any work yet. "
-            "Next, start your first app by running <code>python manage.py startapp [app_label]</code>."),
-        "explanation": _("You're seeing this message because you have <code>DEBUG = True</code> in your "
-            "Django settings file and you haven't configured any URLs. Get to work!"),
+        "instructions": _(
+            "Next, start your first app by running <code>python manage.py startapp [app_label]</code>."
+        ),
+        "explanation": _(
+            "You're seeing this message because you have <code>DEBUG = True</code> in your "
+            "Django settings file and you haven't configured any URLs. Get to work!"
+        ),
     })
 
     return HttpResponse(t.render(c), content_type='text/html')
+
 
 #
 # Templates are embedded in the file so that we know the error handler will
@@ -528,12 +525,12 @@ TECHNICAL_500_TEMPLATE = ("""
   <meta http-equiv="content-type" content="text/html; charset=utf-8">
   <meta name="robots" content="NONE,NOARCHIVE">
   <title>{% if exception_type %}{{ exception_type }}{% else %}Report{% endif %}"""
-"""{% if request %} at {{ request.path_info|escape }}{% endif %}</title>
+r"""{% if request %} at {{ request.path_info|escape }}{% endif %}</title>
   <style type="text/css">
     html * { padding:0; margin:0; }
     body * { padding:10px 20px; }
     body * * { padding:0; }
-    body { font:small sans-serif; }
+    body { font:small sans-serif; background-color:#fff; color:#000; }
     body>div { border-bottom:1px solid #ddd; }
     h1 { font-weight:normal; }
     h2 { margin-bottom:.8em; }
@@ -631,13 +628,13 @@ TECHNICAL_500_TEMPLATE = ("""
       var s = link.getElementsByTagName('span')[0];
       var uarr = String.fromCharCode(0x25b6);
       var darr = String.fromCharCode(0x25bc);
-      s.innerHTML = s.innerHTML == uarr ? darr : uarr;
+      s.textContent = s.textContent == uarr ? darr : uarr;
       return false;
     }
     function switchPastebinFriendly(link) {
       s1 = "Switch to copy-and-paste view";
       s2 = "Switch back to interactive view";
-      link.innerHTML = link.innerHTML.trim() == s1 ? s2: s1;
+      link.textContent = link.textContent.trim() == s1 ? s2: s1;
       toggle('browserTraceback', 'pastebinTraceback');
       return false;
     }
@@ -721,7 +718,6 @@ TECHNICAL_500_TEMPLATE = ("""
                     {% for attempt in entry.tried %}
                         <li><code>{{ attempt.0.loader_name }}</code>: {{ attempt.0.name }} ({{ attempt.1 }})</li>
                     {% endfor %}
-                    </ul>
                 {% else %}
                     <li>This engine did not provide a list of tried templates.</li>
                 {% endif %}
@@ -813,7 +809,7 @@ TECHNICAL_500_TEMPLATE = ("""
                 </tr>
               </thead>
               <tbody>
-                {% for var in frame.vars|dictsort:"0" %}
+                {% for var in frame.vars|dictsort:0 %}
                   <tr>
                     <td>{{ var.0|force_escape }}</td>
                     <td class="code"><pre>{{ var.1 }}</pre></td>
@@ -847,7 +843,8 @@ Python Version: {{ sys_version_info }}
 Installed Applications:
 {{ settings.INSTALLED_APPS|pprint }}
 Installed Middleware:
-{{ settings.MIDDLEWARE_CLASSES|pprint }}
+{{ settings.MIDDLEWARE|pprint }}"""
+"""
 
 {% if template_does_not_exist %}Template loader postmortem
 {% if postmortem %}Django tried loading these templates, in this order:
@@ -882,7 +879,7 @@ Exception Type: {{ exception_type|escape }}{% if request %} at {{ request.path_i
 Exception Value: {{ exception_value|force_escape }}
 </textarea>
   <br><br>
-  <input type="submit" value="Share this traceback on a public Web site">
+  <input type="submit" value="Share this traceback on a public website">
   </div>
 </form>
 </div>
@@ -893,9 +890,9 @@ Exception Value: {{ exception_value|force_escape }}
   <h2>Request information</h2>
 
 {% if request %}
-  {% if request.user %}
+  {% if user_str %}
     <h3 id="user-info">USER</h3>
-    <p>{{ request.user }}</p>
+    <p>{{ user_str }}</p>
   {% endif %}
 
   <h3 id="get-info">GET</h3>
@@ -908,10 +905,10 @@ Exception Value: {{ exception_value|force_escape }}
         </tr>
       </thead>
       <tbody>
-        {% for var in request.GET.items %}
+        {% for k, v in request_GET_items %}
           <tr>
-            <td>{{ var.0 }}</td>
-            <td class="code"><pre>{{ var.1|pprint }}</pre></td>
+            <td>{{ k }}</td>
+            <td class="code"><pre>{{ v|pprint }}</pre></td>
           </tr>
         {% endfor %}
       </tbody>
@@ -921,7 +918,7 @@ Exception Value: {{ exception_value|force_escape }}
   {% endif %}
 
   <h3 id="post-info">POST</h3>
-  {% if filtered_POST %}
+  {% if filtered_POST_items %}
     <table class="req">
       <thead>
         <tr>
@@ -930,10 +927,10 @@ Exception Value: {{ exception_value|force_escape }}
         </tr>
       </thead>
       <tbody>
-        {% for var in filtered_POST.items %}
+        {% for k, v in filtered_POST_items %}
           <tr>
-            <td>{{ var.0 }}</td>
-            <td class="code"><pre>{{ var.1|pprint }}</pre></td>
+            <td>{{ k }}</td>
+            <td class="code"><pre>{{ v|pprint }}</pre></td>
           </tr>
         {% endfor %}
       </tbody>
@@ -951,10 +948,10 @@ Exception Value: {{ exception_value|force_escape }}
             </tr>
         </thead>
         <tbody>
-            {% for var in request.FILES.items %}
+            {% for k, v in request_FILES_items %}
                 <tr>
-                    <td>{{ var.0 }}</td>
-                    <td class="code"><pre>{{ var.1|pprint }}</pre></td>
+                    <td>{{ k }}</td>
+                    <td class="code"><pre>{{ v|pprint }}</pre></td>
                 </tr>
             {% endfor %}
         </tbody>
@@ -974,10 +971,10 @@ Exception Value: {{ exception_value|force_escape }}
         </tr>
       </thead>
       <tbody>
-        {% for var in request.COOKIES.items %}
+        {% for k, v in request_COOKIES_items %}
           <tr>
-            <td>{{ var.0 }}</td>
-            <td class="code"><pre>{{ var.1|pprint }}</pre></td>
+            <td>{{ k }}</td>
+            <td class="code"><pre>{{ v|pprint }}</pre></td>
           </tr>
         {% endfor %}
       </tbody>
@@ -995,7 +992,7 @@ Exception Value: {{ exception_value|force_escape }}
       </tr>
     </thead>
     <tbody>
-      {% for var in request.META.items|dictsort:"0" %}
+      {% for var in request.META.items|dictsort:0 %}
         <tr>
           <td>{{ var.0 }}</td>
           <td class="code"><pre>{{ var.1|pprint }}</pre></td>
@@ -1017,7 +1014,7 @@ Exception Value: {{ exception_value|force_escape }}
       </tr>
     </thead>
     <tbody>
-      {% for var in settings.items|dictsort:"0" %}
+      {% for var in settings.items|dictsort:0 %}
         <tr>
           <td>{{ var.0 }}</td>
           <td class="code"><pre>{{ var.1|pprint }}</pre></td>
@@ -1038,7 +1035,7 @@ Exception Value: {{ exception_value|force_escape }}
 {% endif %}
 </body>
 </html>
-""")
+""")  # NOQA
 
 TECHNICAL_500_TEXT_TEMPLATE = (""""""
 """{% firstof exception_type 'Report' %}{% if request %} at {{ request.path_info }}{% endif %}
@@ -1054,7 +1051,8 @@ Server time: {{server_time|date:"r"}}
 Installed Applications:
 {{ settings.INSTALLED_APPS|pprint }}
 Installed Middleware:
-{{ settings.MIDDLEWARE_CLASSES|pprint }}
+{{ settings.MIDDLEWARE|pprint }}"""
+"""
 {% if template_does_not_exist %}Template loader postmortem
 {% if postmortem %}Django tried loading these templates, in this order:
 {% for entry in postmortem %}
@@ -1093,26 +1091,26 @@ File "{{ frame.filename }}" in {{ frame.function }}
 {% if exception_type %}Exception Type: {{ exception_type }}{% if request %} at {{ request.path_info }}{% endif %}
 {% if exception_value %}Exception Value: {{ exception_value }}{% endif %}{% endif %}{% endif %}
 {% if request %}Request information:
-{% if request.user %}USER: {{ request.user }}{% endif %}
+{% if user_str %}USER: {{ user_str }}{% endif %}
 
-GET:{% for k, v in request.GET.items %}
+GET:{% for k, v in request_GET_items %}
 {{ k }} = {{ v|stringformat:"r" }}{% empty %} No GET data{% endfor %}
 
-POST:{% for k, v in filtered_POST.items %}
+POST:{% for k, v in filtered_POST_items %}
 {{ k }} = {{ v|stringformat:"r" }}{% empty %} No POST data{% endfor %}
 
-FILES:{% for k, v in request.FILES.items %}
+FILES:{% for k, v in request_FILES_items %}
 {{ k }} = {{ v|stringformat:"r" }}{% empty %} No FILES data{% endfor %}
 
-COOKIES:{% for k, v in request.COOKIES.items %}
+COOKIES:{% for k, v in request_COOKIES_items %}
 {{ k }} = {{ v|stringformat:"r" }}{% empty %} No cookie data{% endfor %}
 
-META:{% for k, v in request.META.items|dictsort:"0" %}
+META:{% for k, v in request.META.items|dictsort:0 %}
 {{ k }} = {{ v|stringformat:"r" }}{% endfor %}
 {% else %}Request data not supplied
 {% endif %}
 Settings:
-Using settings module {{ settings.SETTINGS_MODULE }}{% for k, v in settings.items|dictsort:"0" %}
+Using settings module {{ settings.SETTINGS_MODULE }}{% for k, v in settings.items|dictsort:0 %}
 {{ k }} = {{ v|stringformat:"r" }}{% endfor %}
 
 {% if not is_email %}
@@ -1120,7 +1118,7 @@ You're seeing this error because you have DEBUG = True in your
 Django settings file. Change that to False, and Django will
 display a standard page generated by the handler for this status code.
 {% endif %}
-""")
+""")  # NOQA
 
 TECHNICAL_404_TEMPLATE = """
 <!DOCTYPE html>
@@ -1183,7 +1181,11 @@ TECHNICAL_404_TEMPLATE = """
           </li>
         {% endfor %}
       </ol>
-      <p>The current URL, <code>{{ request_path|escape }}</code>, didn't match any of these.</p>
+      <p>
+        {% if request_path %}
+        The current path, <code>{{ request_path|escape }}</code>,{% else %}
+        The empty path{% endif %} didn't match any of these.
+      </p>
     {% else %}
       <p>{{ reason }}</p>
     {% endif %}

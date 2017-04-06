@@ -1,15 +1,10 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
 import os
 import unittest
-from unittest import skipUnless
+from unittest import mock, skipUnless
 
 from django.conf import settings
 from django.contrib.gis.geoip2 import HAS_GEOIP2
 from django.contrib.gis.geos import HAS_GEOS, GEOSGeometry
-from django.test import mock
-from django.utils import six
 
 if HAS_GEOIP2:
     from django.contrib.gis.geoip2 import GeoIP2, GeoIP2Exception
@@ -19,8 +14,10 @@ if HAS_GEOIP2:
 # The GEOIP_DATA path should be the only setting set (the directory
 # should contain links or the actual database files 'GeoLite2-City.mmdb' and
 # 'GeoLite2-City.mmdb'.
-@skipUnless(HAS_GEOIP2 and getattr(settings, "GEOIP_PATH", None),
-    "GeoIP is required along with the GEOIP_PATH setting.")
+@skipUnless(
+    HAS_GEOIP2 and getattr(settings, "GEOIP_PATH", None),
+    "GeoIP is required along with the GEOIP_PATH setting."
+)
 class GeoIPTest(unittest.TestCase):
     addr = '128.249.1.1'
     fqdn = 'tmc.edu'
@@ -47,23 +44,29 @@ class GeoIPTest(unittest.TestCase):
         # Improper parameters.
         bad_params = (23, 'foo', 15.23)
         for bad in bad_params:
-            self.assertRaises(GeoIP2Exception, GeoIP2, cache=bad)
-            if isinstance(bad, six.string_types):
+            with self.assertRaises(GeoIP2Exception):
+                GeoIP2(cache=bad)
+            if isinstance(bad, str):
                 e = GeoIP2Exception
             else:
                 e = TypeError
-            self.assertRaises(e, GeoIP2, bad, 0)
+            with self.assertRaises(e):
+                GeoIP2(bad, 0)
 
     def test02_bad_query(self):
         "GeoIP query parameter checking."
         cntry_g = GeoIP2(city='<foo>')
         # No city database available, these calls should fail.
-        self.assertRaises(GeoIP2Exception, cntry_g.city, 'tmc.edu')
-        self.assertRaises(GeoIP2Exception, cntry_g.coords, 'tmc.edu')
+        with self.assertRaises(GeoIP2Exception):
+            cntry_g.city('tmc.edu')
+        with self.assertRaises(GeoIP2Exception):
+            cntry_g.coords('tmc.edu')
 
         # Non-string query should raise TypeError
-        self.assertRaises(TypeError, cntry_g.country_code, 17)
-        self.assertRaises(TypeError, cntry_g.country_name, GeoIP2)
+        with self.assertRaises(TypeError):
+            cntry_g.country_code(17)
+        with self.assertRaises(TypeError):
+            cntry_g.country_name(GeoIP2)
 
     @mock.patch('socket.gethostbyname')
     def test03_country(self, gethostbyname):

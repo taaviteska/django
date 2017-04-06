@@ -1,21 +1,18 @@
-from __future__ import unicode_literals
-
 import datetime
 
 from django.contrib import admin
 from django.contrib.admin.models import LogEntry
 from django.contrib.admin.options import IncorrectLookupParameters
 from django.contrib.admin.templatetags.admin_list import pagination
-from django.contrib.admin.tests import AdminSeleniumWebDriverTestCase
+from django.contrib.admin.tests import AdminSeleniumTestCase
 from django.contrib.admin.views.main import ALL_VAR, SEARCH_VAR, ChangeList
 from django.contrib.auth.models import User
 from django.contrib.contenttypes.models import ContentType
 from django.template import Context, Template
-from django.test import TestCase, ignore_warnings, override_settings
+from django.test import TestCase, override_settings
 from django.test.client import RequestFactory
 from django.urls import reverse
-from django.utils import formats, six
-from django.utils.deprecation import RemovedInDjango20Warning
+from django.utils import formats
 
 from .admin import (
     BandAdmin, ChildAdmin, ChordsBandAdmin, ConcertAdmin,
@@ -58,7 +55,7 @@ class ChangeListTests(TestCase):
         self.factory = RequestFactory()
 
     def _create_superuser(self, username):
-        return User.objects.create(username=username, is_superuser=True)
+        return User.objects.create_superuser(username=username, email='a@b.com', password='xxx')
 
     def _mocked_authenticated_request(self, url, user):
         request = self.factory.get(url)
@@ -95,7 +92,7 @@ class ChangeListTests(TestCase):
             request, Child,
             *get_changelist_args(ia, list_select_related=ia.get_list_select_related(request))
         )
-        self.assertEqual(cl.queryset.query.select_related, False)
+        self.assertIs(cl.queryset.query.select_related, False)
 
     def test_get_select_related_custom_method(self):
         class GetListSelectRelatedAdmin(admin.ModelAdmin):
@@ -130,12 +127,11 @@ class ChangeListTests(TestCase):
             '<tbody><tr class="row1"><th class="field-name"><a href="%s">name</a></th>'
             '<td class="field-parent nowrap">-</td></tr></tbody>' % link
         )
-        self.assertNotEqual(table_output.find(row_html), -1,
-            'Failed to find expected row element: %s' % table_output)
+        self.assertNotEqual(table_output.find(row_html), -1, 'Failed to find expected row element: %s' % table_output)
 
     def test_result_list_set_empty_value_display_on_admin_site(self):
         """
-        Test that empty value display can be set on AdminSite
+        Empty value display can be set on AdminSite.
         """
         new_child = Child.objects.create(name='name', parent=None)
         request = self.factory.get('/child/')
@@ -152,12 +148,11 @@ class ChangeListTests(TestCase):
             '<tbody><tr class="row1"><th class="field-name"><a href="%s">name</a></th>'
             '<td class="field-parent nowrap">???</td></tr></tbody>' % link
         )
-        self.assertNotEqual(table_output.find(row_html), -1,
-            'Failed to find expected row element: %s' % table_output)
+        self.assertNotEqual(table_output.find(row_html), -1, 'Failed to find expected row element: %s' % table_output)
 
     def test_result_list_set_empty_value_display_in_model_admin(self):
         """
-        Test that empty value display can be set in ModelAdmin or individual fields.
+        Empty value display can be set in ModelAdmin or individual fields.
         """
         new_child = Child.objects.create(name='name', parent=None)
         request = self.factory.get('/child/')
@@ -172,13 +167,12 @@ class ChangeListTests(TestCase):
             '<tbody><tr class="row1"><th class="field-name"><a href="%s">name</a></th>'
             '<td class="field-age_display">&amp;dagger;</td><td class="field-age">-empty-</td></tr></tbody>' % link
         )
-        self.assertNotEqual(table_output.find(row_html), -1,
-            'Failed to find expected row element: %s' % table_output)
+        self.assertNotEqual(table_output.find(row_html), -1, 'Failed to find expected row element: %s' % table_output)
 
     def test_result_list_html(self):
         """
-        Verifies that inclusion tag result_list generates a table when with
-        default ModelAdmin settings.
+        Inclusion tag result_list generates a table when with default
+        ModelAdmin settings.
         """
         new_parent = Parent.objects.create(name='parent')
         new_child = Child.objects.create(name='name', parent=new_parent)
@@ -194,8 +188,7 @@ class ChangeListTests(TestCase):
             '<tbody><tr class="row1"><th class="field-name"><a href="%s">name</a></th>'
             '<td class="field-parent nowrap">Parent object</td></tr></tbody>' % link
         )
-        self.assertNotEqual(table_output.find(row_html), -1,
-            'Failed to find expected row element: %s' % table_output)
+        self.assertNotEqual(table_output.find(row_html), -1, 'Failed to find expected row element: %s' % table_output)
 
     def test_result_list_editable_html(self):
         """
@@ -256,34 +249,6 @@ class ChangeListTests(TestCase):
         m.list_editable = ['name']
         with self.assertRaises(IncorrectLookupParameters):
             ChangeList(request, Child, *get_changelist_args(m))
-
-    @ignore_warnings(category=RemovedInDjango20Warning)
-    def test_result_list_with_allow_tags(self):
-        """
-        Test for deprecation of allow_tags attribute
-        """
-        new_parent = Parent.objects.create(name='parent')
-        for i in range(2):
-            Child.objects.create(name='name %s' % i, parent=new_parent)
-        request = self.factory.get('/child/')
-        m = ChildAdmin(Child, custom_site)
-
-        def custom_method(self, obj=None):
-            return 'Unsafe html <br />'
-        custom_method.allow_tags = True
-
-        # Add custom method with allow_tags attribute
-        m.custom_method = custom_method
-        m.list_display = ['id', 'name', 'parent', 'custom_method']
-
-        cl = ChangeList(request, Child, *get_changelist_args(m))
-        FormSet = m.get_changelist_formset(request)
-        cl.formset = FormSet(queryset=cl.result_list)
-        template = Template('{% load admin_list %}{% spaceless %}{% result_list cl %}{% endspaceless %}')
-        context = Context({'cl': cl})
-        table_output = template.render(context)
-        custom_field_html = '<td class="field-custom_method">Unsafe html <br /></td>'
-        self.assertInHTML(custom_field_html, table_output)
 
     def test_custom_paginator(self):
         new_parent = Parent.objects.create(name='parent')
@@ -449,6 +414,37 @@ class ChangeListTests(TestCase):
         # There's only one Concert instance
         self.assertEqual(cl.queryset.count(), 1)
 
+    def test_pk_in_search_fields(self):
+        band = Group.objects.create(name='The Hype')
+        Concert.objects.create(name='Woodstock', group=band)
+
+        m = ConcertAdmin(Concert, custom_site)
+        m.search_fields = ['group__pk']
+
+        request = self.factory.get('/concert/', data={SEARCH_VAR: band.pk})
+        cl = ChangeList(request, Concert, *get_changelist_args(m))
+        self.assertEqual(cl.queryset.count(), 1)
+
+        request = self.factory.get('/concert/', data={SEARCH_VAR: band.pk + 5})
+        cl = ChangeList(request, Concert, *get_changelist_args(m))
+        self.assertEqual(cl.queryset.count(), 0)
+
+    def test_no_distinct_for_m2m_in_list_filter_without_params(self):
+        """
+        If a ManyToManyField is in list_filter but isn't in any lookup params,
+        the changelist's query shouldn't have distinct.
+        """
+        m = BandAdmin(Band, custom_site)
+        for lookup_params in ({}, {'name': 'test'}):
+            request = self.factory.get('/band/', lookup_params)
+            cl = ChangeList(request, Band, *get_changelist_args(m))
+            self.assertFalse(cl.queryset.query.distinct)
+
+        # A ManyToManyField in params does have distinct applied.
+        request = self.factory.get('/band/', {'genres': '0'})
+        cl = ChangeList(request, Band, *get_changelist_args(m))
+        self.assertTrue(cl.queryset.query.distinct)
+
     def test_pagination(self):
         """
         Regression tests for #12893: Pagination in admins changelist doesn't
@@ -480,13 +476,12 @@ class ChangeListTests(TestCase):
         Regression test for #13196: output of functions should be  localized
         in the changelist.
         """
-        User.objects.create_superuser(
-            username='super', email='super@localhost', password='secret')
-        self.client.login(username='super', password='secret')
+        superuser = User.objects.create_superuser(username='super', email='super@localhost', password='secret')
+        self.client.force_login(superuser)
         event = Event.objects.create(date=datetime.date.today())
         response = self.client.get(reverse('admin:admin_changelist_event_changelist'))
         self.assertContains(response, formats.localize(event.date))
-        self.assertNotContains(response, six.text_type(event.date))
+        self.assertNotContains(response, str(event.date))
 
     def test_dynamic_list_display(self):
         """
@@ -588,10 +583,6 @@ class ChangeListTests(TestCase):
         self.assertNotContains(response, '<a href="%s">' % link)
 
     def test_tuple_list_display(self):
-        """
-        Regression test for #17128
-        (ChangeList failing under Python 2.5 after r16319)
-        """
         swallow = Swallow.objects.create(origin='Africa', load='12.34', speed='22.2')
         swallow2 = Swallow.objects.create(origin='Africa', load='12.34', speed='22.2')
         swallow_o2o = SwallowOneToOne.objects.create(swallow=swallow2)
@@ -601,19 +592,85 @@ class ChangeListTests(TestCase):
         request = self._mocked_authenticated_request('/swallow/', superuser)
         response = model_admin.changelist_view(request)
         # just want to ensure it doesn't blow up during rendering
-        self.assertContains(response, six.text_type(swallow.origin))
-        self.assertContains(response, six.text_type(swallow.load))
-        self.assertContains(response, six.text_type(swallow.speed))
+        self.assertContains(response, str(swallow.origin))
+        self.assertContains(response, str(swallow.load))
+        self.assertContains(response, str(swallow.speed))
         # Reverse one-to-one relations should work.
         self.assertContains(response, '<td class="field-swallowonetoone">-</td>')
         self.assertContains(response, '<td class="field-swallowonetoone">%s</td>' % swallow_o2o)
 
+    def test_multiuser_edit(self):
+        """
+        Simultaneous edits of list_editable fields on the changelist by
+        different users must not result in one user's edits creating a new
+        object instead of modifying the correct existing object (#11313).
+        """
+        # To replicate this issue, simulate the following steps:
+        # 1. User1 opens an admin changelist with list_editable fields.
+        # 2. User2 edits object "Foo" such that it moves to another page in
+        #    the pagination order and saves.
+        # 3. User1 edits object "Foo" and saves.
+        # 4. The edit made by User1 does not get applied to object "Foo" but
+        #    instead is used to create a new object (bug).
+
+        # For this test, order the changelist by the 'speed' attribute and
+        # display 3 objects per page (SwallowAdmin.list_per_page = 3).
+
+        # Setup the test to reflect the DB state after step 2 where User2 has
+        # edited the first swallow object's speed from '4' to '1'.
+        a = Swallow.objects.create(origin='Swallow A', load=4, speed=1)
+        b = Swallow.objects.create(origin='Swallow B', load=2, speed=2)
+        c = Swallow.objects.create(origin='Swallow C', load=5, speed=5)
+        d = Swallow.objects.create(origin='Swallow D', load=9, speed=9)
+
+        superuser = self._create_superuser('superuser')
+        self.client.force_login(superuser)
+        changelist_url = reverse('admin:admin_changelist_swallow_changelist')
+
+        # Send the POST from User1 for step 3. It's still using the changelist
+        # ordering from before User2's edits in step 2.
+        data = {
+            'form-TOTAL_FORMS': '3',
+            'form-INITIAL_FORMS': '3',
+            'form-MIN_NUM_FORMS': '0',
+            'form-MAX_NUM_FORMS': '1000',
+            'form-0-id': str(d.pk),
+            'form-1-id': str(c.pk),
+            'form-2-id': str(a.pk),
+            'form-0-load': '9.0',
+            'form-0-speed': '9.0',
+            'form-1-load': '5.0',
+            'form-1-speed': '5.0',
+            'form-2-load': '5.0',
+            'form-2-speed': '4.0',
+            '_save': 'Save',
+        }
+        response = self.client.post(changelist_url, data, follow=True, extra={'o': '-2'})
+
+        # The object User1 edited in step 3 is displayed on the changelist and
+        # has the correct edits applied.
+        self.assertContains(response, '1 swallow was changed successfully.')
+        self.assertContains(response, a.origin)
+        a.refresh_from_db()
+        self.assertEqual(a.load, float(data['form-2-load']))
+        self.assertEqual(a.speed, float(data['form-2-speed']))
+        b.refresh_from_db()
+        self.assertEqual(b.load, 2)
+        self.assertEqual(b.speed, 2)
+        c.refresh_from_db()
+        self.assertEqual(c.load, float(data['form-1-load']))
+        self.assertEqual(c.speed, float(data['form-1-speed']))
+        d.refresh_from_db()
+        self.assertEqual(d.load, float(data['form-0-load']))
+        self.assertEqual(d.speed, float(data['form-0-speed']))
+        # No new swallows were created.
+        self.assertEqual(len(Swallow.objects.all()), 4)
+
     def test_deterministic_order_for_unordered_model(self):
         """
-        Ensure that the primary key is systematically used in the ordering of
-        the changelist's results to guarantee a deterministic order, even
-        when the Model doesn't have any default ordering defined.
-        Refs #17198.
+        The primary key is used in the ordering of the changelist's results to
+        guarantee a deterministic order, even when the model doesn't have any
+        default ordering defined (#17198).
         """
         superuser = self._create_superuser('superuser')
 
@@ -655,10 +712,9 @@ class ChangeListTests(TestCase):
 
     def test_deterministic_order_for_model_ordered_by_its_manager(self):
         """
-        Ensure that the primary key is systematically used in the ordering of
-        the changelist's results to guarantee a deterministic order, even
-        when the Model has a manager that defines a default ordering.
-        Refs #17198.
+        The primary key is used in the ordering of the changelist's results to
+        guarantee a deterministic order, even when the model has a manager that
+        defines a default ordering (#17198).
         """
         superuser = self._create_superuser('superuser')
 
@@ -756,11 +812,7 @@ class ChangeListTests(TestCase):
             cl.page_num = page_num
             cl.get_results(request)
             real_page_range = pagination(cl)['page_range']
-
-            self.assertListEqual(
-                expected_page_range,
-                list(real_page_range),
-            )
+            self.assertEqual(expected_page_range, list(real_page_range))
 
     def test_object_tools_displayed_no_add_permission(self):
         """
@@ -774,7 +826,7 @@ class ChangeListTests(TestCase):
         response = m.changelist_view(request)
         self.assertIn('<ul class="object-tools">', response.rendered_content)
         # The "Add" button inside the object-tools shouldn't appear.
-        self.assertNotIn('Add', response.rendered_content)
+        self.assertNotIn('Add ', response.rendered_content)
 
 
 class AdminLogNodeTestCase(TestCase):
@@ -815,29 +867,20 @@ class AdminLogNodeTestCase(TestCase):
         self.assertEqual(t.render(Context({})), 'Added "<User: jondoe>".')
 
 
-@override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.SHA1PasswordHasher'],
-                   ROOT_URLCONF="admin_changelist.urls")
-class SeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
+@override_settings(ROOT_URLCONF='admin_changelist.urls')
+class SeleniumTests(AdminSeleniumTestCase):
 
-    available_apps = ['admin_changelist'] + AdminSeleniumWebDriverTestCase.available_apps
-    webdriver_class = 'selenium.webdriver.firefox.webdriver.WebDriver'
+    available_apps = ['admin_changelist'] + AdminSeleniumTestCase.available_apps
 
     def setUp(self):
-        # password = "secret"
-        User.objects.create(
-            pk=100, username='super', first_name='Super', last_name='User', email='super@example.com',
-            password='sha1$995a3$6011485ea3834267d719b4c801409b8b1ddd0158', is_active=True, is_superuser=True,
-            is_staff=True, last_login=datetime.datetime(2007, 5, 30, 13, 20, 10),
-            date_joined=datetime.datetime(2007, 5, 30, 13, 20, 10)
-        )
+        User.objects.create_superuser(username='super', password='secret', email=None)
 
     def test_add_row_selection(self):
         """
-        Ensure that the status line for selected rows gets updated correctly (#22038)
+        The status line for selected rows gets updated correctly (#22038).
         """
         self.admin_login(username='super', password='secret')
-        self.selenium.get('%s%s' % (self.live_server_url,
-                                    reverse('admin:auth_user_changelist')))
+        self.selenium.get(self.live_server_url + reverse('admin:auth_user_changelist'))
 
         form_id = '#changelist-form'
 
@@ -856,11 +899,3 @@ class SeleniumFirefoxTests(AdminSeleniumWebDriverTestCase):
             '%s #result_list tbody tr:first-child .action-select' % form_id)
         row_selector.click()
         self.assertEqual(selection_indicator.text, "1 of 1 selected")
-
-
-class SeleniumChromeTests(SeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.chrome.webdriver.WebDriver'
-
-
-class SeleniumIETests(SeleniumFirefoxTests):
-    webdriver_class = 'selenium.webdriver.ie.webdriver.WebDriver'

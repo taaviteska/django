@@ -1,18 +1,16 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
 from itertools import chain
 
 from django.utils.itercompat import is_iterable
 
 
-class Tags(object):
+class Tags:
     """
     Built-in tags for internal checks.
     """
     admin = 'admin'
     caches = 'caches'
     compatibility = 'compatibility'
+    database = 'database'
     models = 'models'
     security = 'security'
     signals = 'signals'
@@ -20,7 +18,7 @@ class Tags(object):
     urls = 'urls'
 
 
-class CheckRegistry(object):
+class CheckRegistry:
 
     def __init__(self):
         self.registered_checks = []
@@ -70,6 +68,11 @@ class CheckRegistry(object):
         if tags is not None:
             checks = [check for check in checks
                       if hasattr(check, 'tags') and set(check.tags) & set(tags)]
+        else:
+            # By default, 'database'-tagged checks are not run as they do more
+            # than mere static code analysis.
+            checks = [check for check in checks
+                      if not hasattr(check, 'tags') or Tags.database not in check.tags]
 
         for check in checks:
             new_errors = check(app_configs=app_configs)

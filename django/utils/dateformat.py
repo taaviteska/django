@@ -10,30 +10,32 @@ Usage:
 7th October 2003 11:39
 >>>
 """
-from __future__ import unicode_literals
-
 import calendar
 import datetime
 import re
 import time
 
-from django.utils import six
 from django.utils.dates import (
     MONTHS, MONTHS_3, MONTHS_ALT, MONTHS_AP, WEEKDAYS, WEEKDAYS_ABBR,
 )
 from django.utils.encoding import force_text
 from django.utils.timezone import get_default_timezone, is_aware, is_naive
-from django.utils.translation import ugettext as _
+from django.utils.translation import gettext as _
 
 re_formatchars = re.compile(r'(?<!\\)([aAbBcdDeEfFgGhHiIjlLmMnNoOPrsStTUuwWyYzZ])')
 re_escaped = re.compile(r'\\(.)')
 
 
-class Formatter(object):
+class Formatter:
     def format(self, formatstr):
         pieces = []
         for i, piece in enumerate(re_formatchars.split(force_text(formatstr))):
             if i % 2:
+                if type(self.data) is datetime.date and hasattr(TimeFormat, piece):
+                    raise TypeError(
+                        "The format for date objects may not contain "
+                        "time-related format specifiers (found '%s')." % piece
+                    )
                 pieces.append(force_text(getattr(self, piece)()))
             elif piece:
                 pieces.append(re_escaped.sub(r'\1', piece))
@@ -75,17 +77,14 @@ class TimeFormat(Formatter):
         """
         Timezone name.
 
-        If timezone information is not available, this method returns
-        an empty string.
+        If timezone information is not available, return an empty string.
         """
         if not self.timezone:
             return ""
 
         try:
             if hasattr(self.data, 'tzinfo') and self.data.tzinfo:
-                # Have to use tzinfo.tzname and not datetime.tzname
-                # because datatime.tzname does not expect Unicode
-                return self.data.tzinfo.tzname(self.data) or ""
+                return self.data.tzname() or ''
         except NotImplementedError:
             pass
         return ""
@@ -125,12 +124,11 @@ class TimeFormat(Formatter):
         "Minutes; i.e. '00' to '59'"
         return '%02d' % self.data.minute
 
-    def O(self):
+    def O(self):  # NOQA: E743
         """
         Difference to Greenwich time in hours; e.g. '+0200', '-0430'.
 
-        If timezone information is not available, this method returns
-        an empty string.
+        If timezone information is not available, return an empty string.
         """
         if not self.timezone:
             return ""
@@ -163,8 +161,7 @@ class TimeFormat(Formatter):
         """
         Time zone of this machine; e.g. 'EST' or 'MDT'.
 
-        If timezone information is not available, this method returns
-        an empty string.
+        If timezone information is not available, return an empty string.
         """
         if not self.timezone:
             return ""
@@ -179,7 +176,7 @@ class TimeFormat(Formatter):
             pass
         if name is None:
             name = self.format('O')
-        return six.text_type(name)
+        return str(name)
 
     def u(self):
         "Microseconds; i.e. '000000' to '999999'"
@@ -191,8 +188,7 @@ class TimeFormat(Formatter):
         timezones west of UTC is always negative, and for those east of UTC is
         always positive.
 
-        If timezone information is not available, this method returns
-        an empty string.
+        If timezone information is not available, return an empty string.
         """
         if not self.timezone:
             return ""
@@ -242,7 +238,7 @@ class DateFormat(TimeFormat):
         "Month, textual, long; e.g. 'January'"
         return MONTHS[self.data.month]
 
-    def I(self):
+    def I(self):  # NOQA: E743
         "'1' if Daylight Savings Time, '0' otherwise."
         try:
             if self.timezone and self.timezone.dst(self.data):
@@ -259,7 +255,7 @@ class DateFormat(TimeFormat):
         "Day of the month without leading zeros; i.e. '1' to '31'"
         return self.data.day
 
-    def l(self):
+    def l(self):  # NOQA: E743
         "Day of the week, textual, long; e.g. 'Friday'"
         return WEEKDAYS[self.data.weekday()]
 
@@ -288,7 +284,7 @@ class DateFormat(TimeFormat):
         return self.data.isocalendar()[0]
 
     def r(self):
-        "RFC 2822 formatted date; e.g. 'Thu, 21 Dec 2000 16:01:07 +0200'"
+        "RFC 5322 formatted date; e.g. 'Thu, 21 Dec 2000 16:01:07 +0200'"
         return self.format('D, j M Y H:i:s O')
 
     def S(self):
@@ -322,7 +318,6 @@ class DateFormat(TimeFormat):
     def W(self):
         "ISO-8601 week number of year, weeks starting on Monday"
         # Algorithm from http://www.personal.ecu.edu/mccartyr/ISOwdALG.txt
-        week_number = None
         jan1_weekday = self.data.replace(month=1, day=1).weekday() + 1
         weekday = self.data.weekday() + 1
         day_of_year = self.z()
@@ -347,7 +342,7 @@ class DateFormat(TimeFormat):
 
     def y(self):
         "Year, 2 digits; e.g. '99'"
-        return six.text_type(self.data.year)[2:]
+        return str(self.data.year)[2:]
 
     def Y(self):
         "Year, 4 digits; e.g. '1999'"

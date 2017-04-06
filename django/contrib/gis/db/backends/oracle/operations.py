@@ -16,9 +16,7 @@ from django.contrib.gis.db.backends.utils import SpatialOperator
 from django.contrib.gis.db.models import aggregates
 from django.contrib.gis.geometry.backend import Geometry
 from django.contrib.gis.measure import Distance
-from django.db.backends.oracle.base import Database
 from django.db.backends.oracle.operations import DatabaseOperations
-from django.utils import six
 
 DEFAULT_TOLERANCE = '0.05'
 
@@ -45,12 +43,12 @@ class SDORelate(SpatialOperator):
     def check_relate_argument(self, arg):
         masks = 'TOUCH|OVERLAPBDYDISJOINT|OVERLAPBDYINTERSECT|EQUAL|INSIDE|COVEREDBY|CONTAINS|COVERS|ANYINTERACT|ON'
         mask_regex = re.compile(r'^(%s)(\+(%s))*$' % (masks, masks), re.I)
-        if not isinstance(arg, six.string_types) or not mask_regex.match(arg):
+        if not isinstance(arg, str) or not mask_regex.match(arg):
             raise ValueError('Invalid SDO_RELATE mask: "%s"' % arg)
 
     def as_sql(self, connection, lookup, template_params, sql_params):
         template_params['mask'] = sql_params.pop()
-        return super(SDORelate, self).as_sql(connection, lookup, template_params, sql_params)
+        return super().as_sql(connection, lookup, template_params, sql_params)
 
 
 class OracleOperations(BaseSpatialOperations, DatabaseOperations):
@@ -61,29 +59,19 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
 
     Adapter = OracleSpatialAdapter
 
-    area = 'SDO_GEOM.SDO_AREA'
-    gml = 'SDO_UTIL.TO_GMLGEOMETRY'
-    centroid = 'SDO_GEOM.SDO_CENTROID'
-    difference = 'SDO_GEOM.SDO_DIFFERENCE'
-    distance = 'SDO_GEOM.SDO_DISTANCE'
     extent = 'SDO_AGGR_MBR'
-    intersection = 'SDO_GEOM.SDO_INTERSECTION'
-    length = 'SDO_GEOM.SDO_LENGTH'
-    num_points = 'SDO_UTIL.GETNUMVERTICES'
-    perimeter = length
-    point_on_surface = 'SDO_GEOM.SDO_POINTONSURFACE'
-    reverse = 'SDO_UTIL.REVERSE_LINESTRING'
-    sym_difference = 'SDO_GEOM.SDO_XOR'
-    transform = 'SDO_CS.TRANSFORM'
-    union = 'SDO_GEOM.SDO_UNION'
     unionagg = 'SDO_AGGR_UNION'
+
+    from_text = 'SDO_GEOMETRY'
 
     function_names = {
         'Area': 'SDO_GEOM.SDO_AREA',
+        'BoundingCircle': 'SDO_GEOM.SDO_MBC',
         'Centroid': 'SDO_GEOM.SDO_CENTROID',
         'Difference': 'SDO_GEOM.SDO_DIFFERENCE',
         'Distance': 'SDO_GEOM.SDO_DISTANCE',
         'Intersection': 'SDO_GEOM.SDO_INTERSECTION',
+        'IsValid': 'SDO_GEOM.VALIDATE_GEOMETRY_WITH_CONTEXT',
         'Length': 'SDO_GEOM.SDO_LENGTH',
         'NumGeometries': 'SDO_UTIL.GETNUMELEM',
         'NumPoints': 'SDO_UTIL.GETNUMVERTICES',
@@ -122,20 +110,17 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
         'dwithin': SDODWithin(),
     }
 
-    truncate_params = {'relate': None}
-
     unsupported_functions = {
-        'AsGeoJSON', 'AsGML', 'AsKML', 'AsSVG',
-        'BoundingCircle', 'Envelope',
-        'ForceRHR', 'GeoHash', 'MemSize', 'Scale',
+        'AsGeoJSON', 'AsKML', 'AsSVG', 'Azimuth', 'Envelope', 'ForceRHR',
+        'GeoHash', 'LineLocatePoint', 'MakeValid', 'MemSize', 'Scale',
         'SnapToGrid', 'Translate',
     }
 
     def geo_quote_name(self, name):
-        return super(OracleOperations, self).geo_quote_name(name).upper()
+        return super().geo_quote_name(name).upper()
 
     def get_db_converters(self, expression):
-        converters = super(OracleOperations, self).get_db_converters(expression)
+        converters = super().get_db_converters(expression)
         internal_type = expression.output_field.get_internal_type()
         geometry_fields = (
             'PointField', 'GeometryField', 'LineStringField',
@@ -145,23 +130,14 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
         )
         if internal_type in geometry_fields:
             converters.append(self.convert_textfield_value)
-        if hasattr(expression.output_field, 'geom_type'):
-            converters.append(self.convert_geometry)
         return converters
 
-    def convert_geometry(self, value, expression, connection, context):
-        if value:
-            value = Geometry(value)
-            if 'transformed_srid' in context:
-                value.srid = context['transformed_srid']
-        return value
-
-    def convert_extent(self, clob, srid):
+    def convert_extent(self, clob):
         if clob:
             # Generally, Oracle returns a polygon for the extent -- however,
             # it can return a single point if there's only one Point in the
             # table.
-            ext_geom = Geometry(clob.read(), srid)
+            ext_geom = Geometry(clob.read())
             gtype = str(ext_geom.geom_type)
             if gtype == 'Polygon':
                 # Construct the 4-tuple from the coordinates in the polygon.
@@ -178,25 +154,17 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
         else:
             return None
 
-    def convert_geom(self, value, geo_field):
-        if value:
-            if isinstance(value, Database.LOB):
-                value = value.read()
-            return Geometry(value, geo_field.srid)
-        else:
-            return None
-
     def geo_db_type(self, f):
         """
-        Returns the geometry database type for Oracle.  Unlike other spatial
+        Return the geometry database type for Oracle. Unlike other spatial
         backends, no stored procedure is necessary and it's the same for all
         geometry types.
         """
         return 'MDSYS.SDO_GEOMETRY'
 
-    def get_distance(self, f, value, lookup_type, **kwargs):
+    def get_distance(self, f, value, lookup_type):
         """
-        Returns the distance parameters given the value and the lookup type.
+        Return the distance parameters given the value and the lookup type.
         On Oracle, geometry columns with a geodetic coordinate system behave
         implicitly like a geography column, and thus meters will be used as
         the distance parameter on them.
@@ -221,10 +189,12 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
 
     def get_geom_placeholder(self, f, value, compiler):
         """
-        Provides a proper substitution value for Geometries that are not in the
+        Provide a proper substitution value for Geometries that are not in the
         SRID of the field.  Specifically, this routine will substitute in the
         SDO_CS.TRANSFORM() function call.
         """
+        tranform_func = self.spatial_function_name('Transform')
+
         if value is None:
             return 'NULL'
 
@@ -233,7 +203,7 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
 
         if hasattr(value, 'as_sql'):
             if transform_value(value, f.srid):
-                placeholder = '%s(%%s, %s)' % (self.transform, f.srid)
+                placeholder = '%s(%%s, %s)' % (tranform_func, f.srid)
             else:
                 placeholder = '%s'
             # No geometry value used for F expression, substitute in
@@ -242,13 +212,13 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
             return placeholder % sql
         else:
             if transform_value(value, f.srid):
-                return '%s(SDO_GEOMETRY(%%s, %s), %s)' % (self.transform, value.srid, f.srid)
+                return '%s(SDO_GEOMETRY(%%s, %s), %s)' % (tranform_func, value.srid, f.srid)
             else:
                 return 'SDO_GEOMETRY(%%s, %s)' % f.srid
 
     def spatial_aggregate_name(self, agg_name):
         """
-        Returns the spatial aggregate SQL name.
+        Return the spatial aggregate SQL name.
         """
         agg_name = 'unionagg' if agg_name.lower() == 'union' else agg_name.lower()
         return getattr(self, agg_name)
@@ -268,4 +238,4 @@ class OracleOperations(BaseSpatialOperations, DatabaseOperations):
         """
         if placeholder == 'NULL':
             return []
-        return super(OracleOperations, self).modify_insert_params(placeholder, params)
+        return super().modify_insert_params(placeholder, params)

@@ -1,6 +1,6 @@
-======================
-QuerySet API reference
-======================
+==========================
+``QuerySet`` API reference
+==========================
 
 .. currentmodule:: django.db.models.query
 
@@ -15,8 +15,8 @@ Throughout this reference we'll use the :ref:`example Weblog models
 
 .. _when-querysets-are-evaluated:
 
-When QuerySets are evaluated
-============================
+When ``QuerySet``\s are evaluated
+=================================
 
 Internally, a ``QuerySet`` can be constructed, filtered, sliced, and generally
 passed around without actually hitting the database. No database activity
@@ -80,8 +80,8 @@ You can evaluate a ``QuerySet`` in the following ways:
 
 .. _pickling QuerySets:
 
-Pickling QuerySets
-------------------
+Pickling ``QuerySet``\s
+-----------------------
 
 If you :mod:`pickle` a ``QuerySet``, this will force all the results to be loaded
 into memory prior to pickling. Pickling is usually used as a precursor to
@@ -121,8 +121,8 @@ described here.
 
 .. _queryset-api:
 
-QuerySet API
-============
+``QuerySet`` API
+================
 
 Here's the formal declaration of a ``QuerySet``:
 
@@ -149,23 +149,22 @@ Here's the formal declaration of a ``QuerySet``:
     .. note::
 
         The ``query`` parameter to :class:`QuerySet` exists so that specialized
-        query subclasses such as
-        :class:`~django.contrib.gis.db.models.GeoQuerySet` can reconstruct
-        internal query state. The value of the parameter is an opaque
-        representation of that query state and is not part of a public API.
-        To put it simply: if you need to ask, you don't need to use it.
+        query subclasses can reconstruct internal query state. The value of the
+        parameter is an opaque representation of that query state and is not
+        part of a public API. To put it simply: if you need to ask, you don't
+        need to use it.
 
 .. currentmodule:: django.db.models.query.QuerySet
 
-Methods that return new QuerySets
----------------------------------
+Methods that return new ``QuerySet``\s
+--------------------------------------
 
 Django provides a range of ``QuerySet`` refinement methods that modify either
 the types of results returned by the ``QuerySet`` or the way its SQL query is
 executed.
 
-filter
-~~~~~~
+``filter()``
+~~~~~~~~~~~~
 
 .. method:: filter(**kwargs)
 
@@ -179,8 +178,8 @@ underlying SQL statement.
 If you need to execute more complex queries (for example, queries with ``OR`` statements),
 you can use :class:`Q objects <django.db.models.Q>`.
 
-exclude
-~~~~~~~
+``exclude()``
+~~~~~~~~~~~~~
 
 .. method:: exclude(**kwargs)
 
@@ -217,15 +216,15 @@ Note the second example is more restrictive.
 If you need to execute more complex queries (for example, queries with ``OR`` statements),
 you can use :class:`Q objects <django.db.models.Q>`.
 
-annotate
-~~~~~~~~
+``annotate()``
+~~~~~~~~~~~~~~
 
 .. method:: annotate(*args, **kwargs)
 
 Annotates each object in the ``QuerySet`` with the provided list of :doc:`query
 expressions </ref/models/expressions>`. An expression may be a simple value, a
 reference to a field on the model (or any related models), or an aggregate
-expression (averages, sums, etc) that has been computed over the objects that
+expression (averages, sums, etc.) that has been computed over the objects that
 are related to the objects in the ``QuerySet``.
 
 Each argument to ``annotate()`` is an annotation that will be added
@@ -265,8 +264,8 @@ control the name of the annotation::
 For an in-depth discussion of aggregation, see :doc:`the topic guide on
 Aggregation </topics/db/aggregation>`.
 
-order_by
-~~~~~~~~
+``order_by()``
+~~~~~~~~~~~~~~
 
 .. method:: order_by(*fields)
 
@@ -387,8 +386,14 @@ query will be ordered by ``pub_date`` and not ``headline``::
     incurs a cost to your database. Each foreign key you add will
     implicitly include all of its default orderings as well.
 
-reverse
-~~~~~~~
+    If a query doesn't have an ordering specified, results are returned from
+    the database in an unspecified order. A particular ordering is guaranteed
+    only when ordering by a set of fields that uniquely identify each object in
+    the results. For example, if a ``name`` field isn't unique, ordering by it
+    won't guarantee objects with the same name always appear in the same order.
+
+``reverse()``
+~~~~~~~~~~~~~
 
 .. method:: reverse()
 
@@ -414,8 +419,8 @@ defined for a given ``QuerySet``, calling ``reverse()`` on it has no real
 effect (the ordering was undefined prior to calling ``reverse()``, and will
 remain undefined afterward).
 
-distinct
-~~~~~~~~
+``distinct()``
+~~~~~~~~~~~~~~
 
 .. method:: distinct(*fields)
 
@@ -497,10 +502,10 @@ Examples (those after the first will only work on PostgreSQL)::
     by the relation `_id` field (``blog_id`` in this case) or the referenced
     one (``blog__pk``) to make sure both expressions match.
 
-values
-~~~~~~
+``values()``
+~~~~~~~~~~~~
 
-.. method:: values(*fields)
+.. method:: values(*fields, **expressions)
 
 Returns a ``QuerySet`` that returns dictionaries, rather than model instances,
 when used as an iterable.
@@ -531,6 +536,23 @@ Example::
     <QuerySet [{'id': 1, 'name': 'Beatles Blog', 'tagline': 'All the latest Beatles news.'}]>
     >>> Blog.objects.values('id', 'name')
     <QuerySet [{'id': 1, 'name': 'Beatles Blog'}]>
+
+The ``values()`` method also takes optional keyword arguments,
+``**expressions``, which are passed through to :meth:`annotate`::
+
+    >>> from django.db.models.functions import Lower
+    >>> Blog.objects.values(lower_name=Lower('name'))
+    <QuerySet [{'lower_name': 'beatles blog'}]>
+
+An aggregate within a ``values()`` clause is applied before other arguments
+within the same ``values()`` clause. If you need to group by another value,
+add it to an earlier ``values()`` clause instead. For example::
+
+    >>> from django.db.models import Count
+    >>> Blog.objects.values('author', entries=Count('entry'))
+    <QuerySet [{'author': 1, 'entries': 20}, {'author': 1, 'entries': 13}]>
+    >>> Blog.objects.values('author').annotate(entries=Count('entry'))
+    <QuerySet [{'author': 1, 'entries': 33}]>
 
 A few subtleties that are worth mentioning:
 
@@ -597,18 +619,25 @@ You can also refer to fields on related models with reverse relations through
    pronounced if you include multiple such fields in your ``values()`` query,
    in which case all possible combinations will be returned.
 
-values_list
-~~~~~~~~~~~
+.. versionchanged:: 1.11
+
+    Support for ``**expressions`` was added.
+
+``values_list()``
+~~~~~~~~~~~~~~~~~
 
 .. method:: values_list(*fields, flat=False)
 
 This is similar to ``values()`` except that instead of returning dictionaries,
 it returns tuples when iterated over. Each tuple contains the value from the
-respective field passed into the ``values_list()`` call — so the first item is
-the first field, etc. For example::
+respective field or expression passed into the ``values_list()`` call — so the
+first item is the first field, etc. For example::
 
     >>> Entry.objects.values_list('id', 'headline')
     [(1, 'First entry'), ...]
+    >>> from django.db.models.functions import Lower
+    >>> Entry.objects.values_list('id', Lower('headline'))
+    [(1, 'first entry'), ...]
 
 If you only pass in a single field, you can also pass in the ``flat``
 parameter. If ``True``, this will mean the returned results are single values,
@@ -631,8 +660,36 @@ achieve that, use ``values_list()`` followed by a ``get()`` call::
     >>> Entry.objects.values_list('headline', flat=True).get(pk=1)
     'First entry'
 
-dates
-~~~~~
+``values()`` and ``values_list()`` are both intended as optimizations for a
+specific use case: retrieving a subset of data without the overhead of creating
+a model instance. This metaphor falls apart when dealing with many-to-many and
+other multivalued relations (such as the one-to-many relation of a reverse
+foreign key) because the "one row, one object" assumption doesn't hold.
+
+For example, notice the behavior when querying across a
+:class:`~django.db.models.ManyToManyField`::
+
+    >>> Author.objects.values_list('name', 'entry__headline')
+    [('Noam Chomsky', 'Impressions of Gaza'),
+     ('George Orwell', 'Why Socialists Do Not Believe in Fun'),
+     ('George Orwell', 'In Defence of English Cooking'),
+     ('Don Quixote', None)]
+
+Authors with multiple entries appear multiple times and authors without any
+entries have ``None`` for the entry headline.
+
+Similarly, when querying a reverse foreign key, ``None`` appears for entries
+not having any author::
+
+    >>> Entry.objects.values_list('authors')
+    [('Noam Chomsky',), ('George Orwell',), (None,)]
+
+.. versionchanged:: 1.11
+
+    Support for expressions in ``*fields`` was added.
+
+``dates()``
+~~~~~~~~~~~
 
 .. method:: dates(field, kind, order='ASC')
 
@@ -667,8 +724,8 @@ Examples::
     >>> Entry.objects.filter(headline__contains='Lennon').dates('pub_date', 'day')
     [datetime.date(2005, 3, 20)]
 
-datetimes
-~~~~~~~~~
+``datetimes()``
+~~~~~~~~~~~~~~~
 
 .. method:: datetimes(field_name, kind, order='ASC', tzinfo=None)
 
@@ -700,19 +757,19 @@ object. If it's ``None``, Django uses the :ref:`current time zone
     As a consequence, your database must be able to interpret the value of
     ``tzinfo.tzname(None)``. This translates into the following requirements:
 
-    - SQLite: install pytz_ — conversions are actually performed in Python.
+    - SQLite: no requirements. Conversions are performed in Python with pytz_
+      (installed when you install Django).
     - PostgreSQL: no requirements (see `Time Zones`_).
     - Oracle: no requirements (see `Choosing a Time Zone File`_).
-    - MySQL: install pytz_ and load the time zone tables with
-      `mysql_tzinfo_to_sql`_.
+    - MySQL: load the time zone tables with `mysql_tzinfo_to_sql`_.
 
     .. _pytz: http://pytz.sourceforge.net/
-    .. _Time Zones: http://www.postgresql.org/docs/current/static/datatype-datetime.html#DATATYPE-TIMEZONES
-    .. _Choosing a Time Zone File: https://docs.oracle.com/cd/E11882_01/server.112/e10729/ch4datetime.htm#NLSPG258
-    .. _mysql_tzinfo_to_sql: https://dev.mysql.com/doc/refman/5.6/en/mysql-tzinfo-to-sql.html
+    .. _Time Zones: https://www.postgresql.org/docs/current/static/datatype-datetime.html#DATATYPE-TIMEZONES
+    .. _Choosing a Time Zone File: https://docs.oracle.com/database/121/NLSPG/ch4datetime.htm#NLSPG258
+    .. _mysql_tzinfo_to_sql: https://dev.mysql.com/doc/refman/en/mysql-tzinfo-to-sql.html
 
-none
-~~~~
+``none()``
+~~~~~~~~~~
 
 .. method:: none()
 
@@ -728,8 +785,8 @@ Examples::
     >>> isinstance(Entry.objects.none(), EmptyQuerySet)
     True
 
-all
-~~~
+``all()``
+~~~~~~~~~
 
 .. method:: all()
 
@@ -743,8 +800,63 @@ typically caches its results. If the data in the database might have changed
 since a ``QuerySet`` was evaluated, you can get updated results for the same
 query by calling ``all()`` on a previously evaluated ``QuerySet``.
 
-select_related
-~~~~~~~~~~~~~~
+``union()``
+~~~~~~~~~~~
+
+.. method:: union(*other_qs, all=False)
+
+.. versionadded:: 1.11
+
+Uses SQL's ``UNION`` operator to combine the results of two or more
+``QuerySet``\s. For example:
+
+    >>> qs1.union(qs2, qs3)
+
+The ``UNION`` operator selects only distinct values by default. To allow
+duplicate values, use the ``all=True`` argument.
+
+``union()``, ``intersection()``, and ``difference()`` return model instances
+of the type of the first ``QuerySet`` even if the arguments are ``QuerySet``\s
+of other models. Passing different models works as long as the ``SELECT`` list
+is the same in all ``QuerySet``\s (at least the types, the names don't matter
+as long as the types in the same order).
+
+In addition, only ``LIMIT``, ``OFFSET``, and ``ORDER BY`` (i.e. slicing and
+:meth:`order_by`) are allowed on the resulting ``QuerySet``. Further, databases
+place restrictions on what operations are allowed in the combined queries. For
+example, most databases don't allow ``LIMIT`` or ``OFFSET`` in the combined
+queries.
+
+``intersection()``
+~~~~~~~~~~~~~~~~~~
+
+.. method:: intersection(*other_qs)
+
+.. versionadded:: 1.11
+
+Uses SQL's ``INTERSECT`` operator to return the shared elements of two or more
+``QuerySet``\s. For example:
+
+    >>> qs1.intersection(qs2, qs3)
+
+See :meth:`union` for some restrictions.
+
+``difference()``
+~~~~~~~~~~~~~~~~
+
+.. method:: difference(*other_qs)
+
+.. versionadded:: 1.11
+
+Uses SQL's ``EXCEPT`` operator to keep only elements present in the
+``QuerySet`` but not in some other ``QuerySet``\s. For example::
+
+    >>> qs1.difference(qs2, qs3)
+
+See :meth:`union` for some restrictions.
+
+``select_related()``
+~~~~~~~~~~~~~~~~~~~~
 
 .. method:: select_related(*fields)
 
@@ -849,8 +961,8 @@ Chaining ``select_related`` calls works in a similar way to other methods -
 that is that ``select_related('foo', 'bar')`` is equivalent to
 ``select_related('foo').select_related('bar')``.
 
-prefetch_related
-~~~~~~~~~~~~~~~~
+``prefetch_related()``
+~~~~~~~~~~~~~~~~~~~~~~
 
 .. method:: prefetch_related(*lookups)
 
@@ -890,9 +1002,11 @@ For example, suppose you have these models::
         name = models.CharField(max_length=50)
         toppings = models.ManyToManyField(Topping)
 
-        def __str__(self):              # __unicode__ on Python 2
-            return "%s (%s)" % (self.name, ", ".join(topping.name
-                                                     for topping in self.toppings.all()))
+        def __str__(self):
+            return "%s (%s)" % (
+                self.name,
+                ", ".join(topping.name for topping in self.toppings.all()),
+            )
 
 and run::
 
@@ -920,6 +1034,10 @@ results; these ``QuerySets`` are then used in the ``self.toppings.all()`` calls.
 The additional queries in ``prefetch_related()`` are executed after the
 ``QuerySet`` has begun to be evaluated and the primary query has been executed.
 
+If you have an iterable of model instances, you can prefetch related attributes
+on those instances using the :func:`~django.db.models.prefetch_related_objects`
+function.
+
 Note that the result cache of the primary ``QuerySet`` and all specified related
 objects will then be fully loaded into memory. This changes the typical
 behavior of ``QuerySets``, which normally try to avoid loading all objects into
@@ -943,11 +1061,23 @@ database.
     performance, since you have done a database query that you haven't used. So
     use this feature with caution!
 
+    Also, if you call the database-altering methods
+    :meth:`~django.db.models.fields.related.RelatedManager.add`,
+    :meth:`~django.db.models.fields.related.RelatedManager.remove`,
+    :meth:`~django.db.models.fields.related.RelatedManager.clear` or
+    :meth:`~django.db.models.fields.related.RelatedManager.set`, on
+    :class:`related managers<django.db.models.fields.related.RelatedManager>`,
+    any prefetched cache for the relation will be cleared.
+
+    .. versionchanged:: 1.11
+
+        The clearing of the prefetched cache described above was added.
+
 You can also use the normal join syntax to do related fields of related
 fields. Suppose we have an additional model to the example above::
 
     class Restaurant(models.Model):
-        pizzas = models.ManyToMany(Pizza, related_name='restaurants')
+        pizzas = models.ManyToManyField(Pizza, related_name='restaurants')
         best_pizza = models.ForeignKey(Pizza, related_name='championed_by')
 
 The following are all legal:
@@ -1008,6 +1138,7 @@ the prefetch operation.
 In its simplest form ``Prefetch`` is equivalent to the traditional string based
 lookups:
 
+    >>> from django.db.models import Prefetch
     >>> Restaurant.objects.prefetch_related(Prefetch('pizzas__toppings'))
 
 You can provide a custom queryset with the optional ``queryset`` argument.
@@ -1103,8 +1234,8 @@ where prefetching with a custom ``QuerySet`` is useful:
     specific order to avoid creating extra queries; therefore it's recommended
     to always carefully order ``prefetch_related`` arguments.
 
-extra
-~~~~~
+``extra()``
+~~~~~~~~~~~
 
 .. method:: extra(select=None, where=None, params=None, tables=None, order_by=None, select_params=None)
 
@@ -1311,8 +1442,8 @@ of the arguments is required, but you should use at least one of them.
     both rows will match. To prevent this, perform the correct typecasting
     before using the value in a query.
 
-defer
-~~~~~
+``defer()``
+~~~~~~~~~~~
 
 .. method:: defer(*fields)
 
@@ -1410,9 +1541,8 @@ one, doing so will result in an error.
     deferred fields, only the loaded fields will be saved. See
     :meth:`~django.db.models.Model.save()` for more details.
 
-
-only
-~~~~
+``only()``
+~~~~~~~~~~
 
 .. method:: only(*fields)
 
@@ -1460,8 +1590,8 @@ is an error as well.
     deferred fields, only the loaded fields will be saved. See
     :meth:`~django.db.models.Model.save()` for more details.
 
-using
-~~~~~
+``using()``
+~~~~~~~~~~~
 
 .. method:: using(alias)
 
@@ -1478,10 +1608,10 @@ For example::
     # queries the database with the 'backup' alias
     >>> Entry.objects.using('backup')
 
-select_for_update
-~~~~~~~~~~~~~~~~~
+``select_for_update()``
+~~~~~~~~~~~~~~~~~~~~~~~
 
-.. method:: select_for_update(nowait=False)
+.. method:: select_for_update(nowait=False, skip_locked=False)
 
 Returns a queryset that will lock rows until the end of the transaction,
 generating a ``SELECT ... FOR UPDATE`` SQL statement on supported databases.
@@ -1499,16 +1629,19 @@ selected rows, the query will block until the lock is released. If this is
 not the behavior you want, call ``select_for_update(nowait=True)``. This will
 make the call non-blocking. If a conflicting lock is already acquired by
 another transaction, :exc:`~django.db.DatabaseError` will be raised when the
-queryset is evaluated.
+queryset is evaluated. You can also ignore locked rows by using
+``select_for_update(skip_locked=True)`` instead. The ``nowait`` and
+``skip_locked`` are mutually exclusive and attempts to call
+``select_for_update()`` with both options enabled will result in a
+:exc:`ValueError`.
 
 Currently, the ``postgresql``, ``oracle``, and ``mysql`` database
-backends support ``select_for_update()``. However, MySQL has no support for the
-``nowait`` argument. Obviously, users of external third-party backends should
-check with their backend's documentation for specifics in those cases.
+backends support ``select_for_update()``. However, MySQL doesn't support the
+``nowait`` and ``skip_locked`` arguments.
 
-Passing ``nowait=True`` to ``select_for_update()`` using database backends that
-do not support ``nowait``, such as MySQL, will cause a
-:exc:`~django.db.DatabaseError` to be raised. This is in order to prevent code
+Passing ``nowait=True`` or ``skip_locked=True`` to ``select_for_update()``
+using database backends that do not support these options, such as MySQL, will
+cause a :exc:`~django.db.DatabaseError` to be raised. This prevents code from
 unexpectedly blocking.
 
 Evaluating a queryset with ``select_for_update()`` in autocommit mode on
@@ -1533,8 +1666,12 @@ raised if ``select_for_update()`` is used in autocommit mode.
     ``select_for_update()`` you should use
     :class:`~django.test.TransactionTestCase`.
 
-raw
-~~~
+.. versionchanged:: 1.11
+
+    The ``skip_locked`` argument was added.
+
+``raw()``
+~~~~~~~~~
 
 .. method:: raw(raw_query, params=None, translations=None)
 
@@ -1550,8 +1687,8 @@ See the :doc:`/topics/db/sql` for more information.
   filtering. As such, it should generally be called from the ``Manager`` or
   from a fresh ``QuerySet`` instance.
 
-Methods that do not return QuerySets
-------------------------------------
+Methods that do not return ``QuerySet``\s
+-----------------------------------------
 
 The following ``QuerySet`` methods evaluate the ``QuerySet`` and return
 something *other than* a ``QuerySet``.
@@ -1559,8 +1696,8 @@ something *other than* a ``QuerySet``.
 These methods do not use a cache (see :ref:`caching-and-querysets`). Rather,
 they query the database each time they're called.
 
-get
-~~~
+``get()``
+~~~~~~~~~
 
 .. method:: get(**kwargs)
 
@@ -1589,8 +1726,13 @@ The :exc:`~django.db.models.Model.DoesNotExist` exception inherits from
     except ObjectDoesNotExist:
         print("Either the entry or blog doesn't exist.")
 
-create
-~~~~~~
+If you expect a queryset to return one row, you can use ``get()`` without any
+arguments to return the object for that row::
+
+    entry = Entry.objects.filter(...).exclude(...).get()
+
+``create()``
+~~~~~~~~~~~~
 
 .. method:: create(**kwargs)
 
@@ -1613,8 +1755,8 @@ database, a call to ``create()`` will fail with an
 :exc:`~django.db.IntegrityError` since primary keys must be unique. Be
 prepared to handle the exception if you are using manual primary keys.
 
-get_or_create
-~~~~~~~~~~~~~
+``get_or_create()``
+~~~~~~~~~~~~~~~~~~~
 
 .. method:: get_or_create(defaults=None, **kwargs)
 
@@ -1636,8 +1778,11 @@ This is meant as a shortcut to boilerplatish code. For example::
 This pattern gets quite unwieldy as the number of fields in a model goes up.
 The above example can be rewritten using ``get_or_create()`` like so::
 
-    obj, created = Person.objects.get_or_create(first_name='John', last_name='Lennon',
-                      defaults={'birthday': date(1940, 10, 9)})
+    obj, created = Person.objects.get_or_create(
+        first_name='John',
+        last_name='Lennon',
+        defaults={'birthday': date(1940, 10, 9)},
+    )
 
 Any keyword arguments passed to ``get_or_create()`` — *except* an optional one
 called ``defaults`` — will be used in a :meth:`get()` call. If an object is
@@ -1649,18 +1794,18 @@ tuple of the new object and ``True``. The new object will be created roughly
 according to this algorithm::
 
     params = {k: v for k, v in kwargs.items() if '__' not in k}
-    params.update(defaults)
+    params.update({k: v() if callable(v) else v for k, v in defaults.items()})
     obj = self.model(**params)
     obj.save()
 
 In English, that means start with any non-``'defaults'`` keyword argument that
 doesn't contain a double underscore (which would indicate a non-exact lookup).
 Then add the contents of ``defaults``, overriding any keys if necessary, and
-use the result as the keyword arguments to the model class. As hinted at
-above, this is a simplification of the algorithm that is used, but it contains
-all the pertinent details. The internal implementation has some more
-error-checking than this and handles some extra edge-conditions; if you're
-interested, read the code.
+use the result as the keyword arguments to the model class. If there are any
+callables in ``defaults``, evaluate them. As hinted at above, this is a
+simplification of the algorithm that is used, but it contains all the pertinent
+details. The internal implementation has some more error-checking than this and
+handles some extra edge-conditions; if you're interested, read the code.
 
 If you have a field named ``defaults`` and want to use it as an exact lookup in
 ``get_or_create()``, just use ``'defaults__exact'``, like so::
@@ -1690,9 +1835,7 @@ Finally, a word on using ``get_or_create()`` in Django views. Please make sure
 to use it only in ``POST`` requests unless you have a good reason not to.
 ``GET`` requests shouldn't have any effect on data. Instead, use ``POST``
 whenever a request to a page has a side effect on your data. For more, see
-`Safe methods`_ in the HTTP spec.
-
-.. _Safe methods: http://www.w3.org/Protocols/rfc2616/rfc2616-sec9.html#sec9.1.1
+:rfc:`Safe methods <7231#section-4.2.1>` in the HTTP spec.
 
 .. warning::
 
@@ -1728,14 +1871,18 @@ whenever a request to a page has a side effect on your data. For more, see
   chapter because it isn't related to that book, but it can't create it either
   because ``title`` field should be unique.
 
-update_or_create
-~~~~~~~~~~~~~~~~
+.. versionchanged:: 1.11
+
+    Added support for callable values in ``defaults``.
+
+``update_or_create()``
+~~~~~~~~~~~~~~~~~~~~~~
 
 .. method:: update_or_create(defaults=None, **kwargs)
 
 A convenience method for updating an object with the given ``kwargs``, creating
 a new one if necessary. The ``defaults`` is a dictionary of (field, value)
-pairs used to update the object.
+pairs used to update the object. The values in ``defaults`` can be callables.
 
 Returns a tuple of ``(object, created)``, where ``object`` is the created or
 updated object and ``created`` is a boolean specifying whether a new object was
@@ -1747,21 +1894,25 @@ the given ``kwargs``. If a match is found, it updates the fields passed in the
 
 This is meant as a shortcut to boilerplatish code. For example::
 
+    defaults = {'first_name': 'Bob'}
     try:
         obj = Person.objects.get(first_name='John', last_name='Lennon')
-        for key, value in updated_values.iteritems():
+        for key, value in defaults.items():
             setattr(obj, key, value)
         obj.save()
     except Person.DoesNotExist:
-        updated_values.update({'first_name': 'John', 'last_name': 'Lennon'})
-        obj = Person(**updated_values)
+        new_values = {'first_name': 'John', 'last_name': 'Lennon'}
+        new_values.update(defaults)
+        obj = Person(**new_values)
         obj.save()
 
 This pattern gets quite unwieldy as the number of fields in a model goes up.
 The above example can be rewritten using ``update_or_create()`` like so::
 
     obj, created = Person.objects.update_or_create(
-        first_name='John', last_name='Lennon', defaults=updated_values)
+        first_name='John', last_name='Lennon',
+        defaults={'first_name': 'Bob'},
+    )
 
 For detailed description how names passed in ``kwargs`` are resolved see
 :meth:`get_or_create`.
@@ -1770,8 +1921,12 @@ As described above in :meth:`get_or_create`, this method is prone to a
 race-condition which can result in multiple rows being inserted simultaneously
 if uniqueness is not enforced at the database level.
 
-bulk_create
-~~~~~~~~~~~
+.. versionchanged:: 1.11
+
+    Added support for callable values in ``defaults``.
+
+``bulk_create()``
+~~~~~~~~~~~~~~~~~
 
 .. method:: bulk_create(objs, batch_size=None)
 
@@ -1780,9 +1935,8 @@ efficient manner (generally only 1 query, no matter how many objects there
 are)::
 
     >>> Entry.objects.bulk_create([
-    ...     Entry(headline="Django 1.0 Released"),
-    ...     Entry(headline="Django 1.1 Announced"),
-    ...     Entry(headline="Breaking: Django is awesome")
+    ...     Entry(headline='This is a test'),
+    ...     Entry(headline='This is only a test'),
     ... ])
 
 This has a number of caveats though:
@@ -1791,19 +1945,16 @@ This has a number of caveats though:
   ``post_save`` signals will not be sent.
 * It does not work with child models in a multi-table inheritance scenario.
 * If the model's primary key is an :class:`~django.db.models.AutoField` it
-  does not retrieve and set the primary key attribute, as ``save()`` does.
+  does not retrieve and set the primary key attribute, as ``save()`` does,
+  unless the database backend supports it (currently PostgreSQL).
 * It does not work with many-to-many relationships.
-
-.. versionchanged:: 1.9
-
-    Support for using ``bulk_create()`` with proxy models was added.
 
 The ``batch_size`` parameter controls how many objects are created in single
 query. The default is to create all objects in one batch, except for SQLite
 where the default is such that at most 999 variables per query are used.
 
-count
-~~~~~
+``count()``
+~~~~~~~~~~~
 
 .. method:: count()
 
@@ -1823,18 +1974,13 @@ should always use ``count()`` rather than loading all of the record into Python
 objects and calling ``len()`` on the result (unless you need to load the
 objects into memory anyway, in which case ``len()`` will be faster).
 
-Depending on which database you're using (e.g. PostgreSQL vs. MySQL),
-``count()`` may return a long integer instead of a normal Python integer. This
-is an underlying implementation quirk that shouldn't pose any real-world
-problems.
-
 Note that if you want the number of items in a ``QuerySet`` and are also
 retrieving model instances from it (for example, by iterating over it), it's
 probably more efficient to use ``len(queryset)`` which won't cause an extra
 database query like ``count()`` would.
 
-in_bulk
-~~~~~~~
+``in_bulk()``
+~~~~~~~~~~~~~
 
 .. method:: in_bulk(id_list=None)
 
@@ -1855,12 +2001,8 @@ Example::
 
 If you pass ``in_bulk()`` an empty list, you'll get an empty dictionary.
 
-.. versionchanged:: 1.10
-
-    In older versions, ``id_list`` was a required argument.
-
-iterator
-~~~~~~~~
+``iterator()``
+~~~~~~~~~~~~~~
 
 .. method:: iterator()
 
@@ -1879,18 +2021,18 @@ evaluated will force it to evaluate again, repeating the query.
 Also, use of ``iterator()`` causes previous ``prefetch_related()`` calls to be
 ignored since these two optimizations do not make sense together.
 
-.. warning::
+Some Python database drivers still load the entire result set into memory, but
+won't cache results after iterating over them. Oracle and :ref:`PostgreSQL
+<postgresql-server-side-cursors>` use server-side cursors to stream results
+from the database without loading the entire result set into memory.
 
-    Some Python database drivers like ``psycopg2`` perform caching if using
-    client side cursors (instantiated with ``connection.cursor()`` and what
-    Django's ORM uses). Using ``iterator()`` does not affect caching at the
-    database driver level. To disable this caching, look at `server side
-    cursors`_.
+.. versionchanged:: 1.11
 
-.. _server side cursors: http://initd.org/psycopg/docs/usage.html#server-side-cursors
+    PostgreSQL support for server-side cursors was added.
 
-latest
-~~~~~~
+
+``latest()``
+~~~~~~~~~~~~
 
 .. method:: latest(field_name=None)
 
@@ -1914,16 +2056,27 @@ given parameters.
 Note that ``earliest()`` and ``latest()`` exist purely for convenience and
 readability.
 
-earliest
-~~~~~~~~
+.. admonition:: ``earliest()`` and ``latest()`` may return instances with null dates.
+
+    Since ordering is delegated to the database, results on fields that allow
+    null values may be ordered differently if you use different databases. For
+    example, PostgreSQL and MySQL sort null values as if they are higher than
+    non-null values, while SQLite does the opposite.
+
+    You may want to filter out null values::
+
+        Entry.objects.filter(pub_date__isnull=False).latest('pub_date')
+
+``earliest()``
+~~~~~~~~~~~~~~
 
 .. method:: earliest(field_name=None)
 
 Works otherwise like :meth:`~django.db.models.query.QuerySet.latest` except
 the direction is changed.
 
-first
-~~~~~
+``first()``
+~~~~~~~~~~~
 
 .. method:: first()
 
@@ -1943,18 +2096,19 @@ equivalent to the above example::
     except IndexError:
         p = None
 
-last
-~~~~
+``last()``
+~~~~~~~~~~
+
 .. method:: last()
 
 Works like  :meth:`first()`, but returns the last object in the queryset.
 
-aggregate
-~~~~~~~~~
+``aggregate()``
+~~~~~~~~~~~~~~~
 
 .. method:: aggregate(*args, **kwargs)
 
-Returns a dictionary of aggregate values (averages, sums, etc) calculated over
+Returns a dictionary of aggregate values (averages, sums, etc.) calculated over
 the ``QuerySet``. Each argument to ``aggregate()`` specifies a value that will
 be included in the dictionary that is returned.
 
@@ -1985,8 +2139,8 @@ control the name of the aggregation value that is returned::
 For an in-depth discussion of aggregation, see :doc:`the topic guide on
 Aggregation </topics/db/aggregation>`.
 
-exists
-~~~~~~
+``exists()``
+~~~~~~~~~~~~
 
 .. method:: exists()
 
@@ -2031,8 +2185,8 @@ more overall work (one query for the existence check plus an extra one to later
 retrieve the results) than simply using ``bool(some_queryset)``, which
 retrieves the results and then checks if any were returned.
 
-update
-~~~~~~
+``update()``
+~~~~~~~~~~~~
 
 .. method:: update(**kwargs)
 
@@ -2105,8 +2259,8 @@ update a bunch of records for a model that has a custom
         e.comments_on = False
         e.save()
 
-delete
-~~~~~~
+``delete()``
+~~~~~~~~~~~~
 
 .. method:: delete()
 
@@ -2125,10 +2279,6 @@ For example, to delete all the entries in a particular blog::
     # Delete all the entries belonging to this Blog.
     >>> Entry.objects.filter(blog=b).delete()
     (4, {'weblog.Entry': 2, 'weblog.Entry_authors': 2})
-
-.. versionchanged:: 1.9
-
-    The return value describing the number of objects deleted was added.
 
 By default, Django's :class:`~django.db.models.ForeignKey` emulates the SQL
 constraint ``ON DELETE CASCADE`` — in other words, any objects with foreign
@@ -2163,8 +2313,8 @@ ForeignKeys which are set to :attr:`~django.db.models.ForeignKey.on_delete`
 Note that the queries generated in object deletion is an implementation
 detail subject to change.
 
-as_manager
-~~~~~~~~~~
+``as_manager()``
+~~~~~~~~~~~~~~~~
 
 .. classmethod:: as_manager()
 
@@ -2174,8 +2324,8 @@ with a copy of the ``QuerySet``’s methods. See
 
 .. _field-lookups:
 
-Field lookups
--------------
+``Field`` lookups
+-----------------
 
 Field lookups are how you specify the meat of an SQL ``WHERE`` clause. They're
 specified as keyword arguments to the ``QuerySet`` methods :meth:`filter()`,
@@ -2192,8 +2342,8 @@ As a convenience when no lookup type is provided (like in
 
 .. fieldlookup:: exact
 
-exact
-~~~~~
+``exact``
+~~~~~~~~~
 
 Exact match. If the value provided for comparison is ``None``, it will be
 interpreted as an SQL ``NULL`` (see :lookup:`isnull` for more details).
@@ -2219,8 +2369,8 @@ SQL equivalents::
 
 .. fieldlookup:: iexact
 
-iexact
-~~~~~~
+``iexact``
+~~~~~~~~~~
 
 Case-insensitive exact match. If the value provided for comparison is ``None``,
 it will be interpreted as an SQL ``NULL`` (see :lookup:`isnull` for more
@@ -2241,15 +2391,14 @@ Note the first query will match ``'Beatles Blog'``, ``'beatles blog'``,
 
 .. admonition:: SQLite users
 
-    When using the SQLite backend and Unicode (non-ASCII) strings, bear in
-    mind the :ref:`database note <sqlite-string-matching>` about string
-    comparisons. SQLite does not do case-insensitive matching for Unicode
-    strings.
+    When using the SQLite backend and non-ASCII strings, bear in mind the
+    :ref:`database note <sqlite-string-matching>` about string comparisons.
+    SQLite does not do case-insensitive matching for non-ASCII strings.
 
 .. fieldlookup:: contains
 
-contains
-~~~~~~~~
+``contains``
+~~~~~~~~~~~~
 
 Case-sensitive containment test.
 
@@ -2273,8 +2422,8 @@ honored today'``.
 
 .. fieldlookup:: icontains
 
-icontains
-~~~~~~~~~
+``icontains``
+~~~~~~~~~~~~~
 
 Case-insensitive containment test.
 
@@ -2288,14 +2437,13 @@ SQL equivalent::
 
 .. admonition:: SQLite users
 
-    When using the SQLite backend and Unicode (non-ASCII) strings, bear in
-    mind the :ref:`database note <sqlite-string-matching>` about string
-    comparisons.
+    When using the SQLite backend and non-ASCII strings, bear in mind the
+    :ref:`database note <sqlite-string-matching>` about string comparisons.
 
 .. fieldlookup:: in
 
-in
-~~
+``in``
+~~~~~~
 
 In a given list.
 
@@ -2353,8 +2501,8 @@ extract two field values, where only one is expected::
 
 .. fieldlookup:: gt
 
-gt
-~~
+``gt``
+~~~~~~
 
 Greater than.
 
@@ -2368,78 +2516,77 @@ SQL equivalent::
 
 .. fieldlookup:: gte
 
-gte
-~~~
+``gte``
+~~~~~~~
 
 Greater than or equal to.
 
 .. fieldlookup:: lt
 
-lt
-~~
+``lt``
+~~~~~~
 
 Less than.
 
 .. fieldlookup:: lte
 
-lte
-~~~
+``lte``
+~~~~~~~
 
 Less than or equal to.
 
 .. fieldlookup:: startswith
 
-startswith
-~~~~~~~~~~
+``startswith``
+~~~~~~~~~~~~~~
 
 Case-sensitive starts-with.
 
 Example::
 
-    Entry.objects.filter(headline__startswith='Will')
+    Entry.objects.filter(headline__startswith='Lennon')
 
 SQL equivalent::
 
-    SELECT ... WHERE headline LIKE 'Will%';
+    SELECT ... WHERE headline LIKE 'Lennon%';
 
 SQLite doesn't support case-sensitive ``LIKE`` statements; ``startswith`` acts
 like ``istartswith`` for SQLite.
 
 .. fieldlookup:: istartswith
 
-istartswith
-~~~~~~~~~~~
+``istartswith``
+~~~~~~~~~~~~~~~
 
 Case-insensitive starts-with.
 
 Example::
 
-    Entry.objects.filter(headline__istartswith='will')
+    Entry.objects.filter(headline__istartswith='Lennon')
 
 SQL equivalent::
 
-    SELECT ... WHERE headline ILIKE 'Will%';
+    SELECT ... WHERE headline ILIKE 'Lennon%';
 
 .. admonition:: SQLite users
 
-    When using the SQLite backend and Unicode (non-ASCII) strings, bear in
-    mind the :ref:`database note <sqlite-string-matching>` about string
-    comparisons.
+    When using the SQLite backend and non-ASCII strings, bear in mind the
+    :ref:`database note <sqlite-string-matching>` about string comparisons.
 
 .. fieldlookup:: endswith
 
-endswith
-~~~~~~~~
+``endswith``
+~~~~~~~~~~~~
 
 Case-sensitive ends-with.
 
 Example::
 
-    Entry.objects.filter(headline__endswith='cats')
+    Entry.objects.filter(headline__endswith='Lennon')
 
 SQL equivalent::
 
-    SELECT ... WHERE headline LIKE '%cats';
+    SELECT ... WHERE headline LIKE '%Lennon';
 
 .. admonition:: SQLite users
 
@@ -2449,29 +2596,28 @@ SQL equivalent::
 
 .. fieldlookup:: iendswith
 
-iendswith
-~~~~~~~~~
+``iendswith``
+~~~~~~~~~~~~~
 
 Case-insensitive ends-with.
 
 Example::
 
-    Entry.objects.filter(headline__iendswith='will')
+    Entry.objects.filter(headline__iendswith='Lennon')
 
 SQL equivalent::
 
-    SELECT ... WHERE headline ILIKE '%will'
+    SELECT ... WHERE headline ILIKE '%Lennon'
 
 .. admonition:: SQLite users
 
-    When using the SQLite backend and Unicode (non-ASCII) strings, bear in
-    mind the :ref:`database note <sqlite-string-matching>` about string
-    comparisons.
+    When using the SQLite backend and non-ASCII strings, bear in mind the
+    :ref:`database note <sqlite-string-matching>` about string comparisons.
 
 .. fieldlookup:: range
 
-range
-~~~~~
+``range``
+~~~~~~~~~
 
 Range test (inclusive).
 
@@ -2502,10 +2648,8 @@ numbers and even characters.
 
 .. fieldlookup:: date
 
-date
-~~~~
-
-.. versionadded:: 1.9
+``date``
+~~~~~~~~
 
 For datetime fields, casts the value as date. Allows chaining additional field
 lookups. Takes a date value.
@@ -2523,8 +2667,8 @@ zone before filtering.
 
 .. fieldlookup:: year
 
-year
-~~~~
+``year``
+~~~~~~~~
 
 For date and datetime fields, an exact year match. Allows chaining additional
 field lookups. Takes an integer year.
@@ -2544,14 +2688,10 @@ SQL equivalent::
 When :setting:`USE_TZ` is ``True``, datetime fields are converted to the
 current time zone before filtering.
 
-.. versionchanged:: 1.9
-
-    Allowed chaining additional field lookups.
-
 .. fieldlookup:: month
 
-month
-~~~~~
+``month``
+~~~~~~~~~
 
 For date and datetime fields, an exact month match. Allows chaining additional
 field lookups. Takes an integer 1 (January) through 12 (December).
@@ -2572,14 +2712,10 @@ When :setting:`USE_TZ` is ``True``, datetime fields are converted to the
 current time zone before filtering. This requires :ref:`time zone definitions
 in the database <database-time-zone-definitions>`.
 
-.. versionchanged:: 1.9
-
-    Allowed chaining additional field lookups.
-
 .. fieldlookup:: day
 
-day
-~~~
+``day``
+~~~~~~~
 
 For date and datetime fields, an exact day match. Allows chaining additional
 field lookups. Takes an integer day.
@@ -2603,14 +2739,32 @@ When :setting:`USE_TZ` is ``True``, datetime fields are converted to the
 current time zone before filtering. This requires :ref:`time zone definitions
 in the database <database-time-zone-definitions>`.
 
-.. versionchanged:: 1.9
+.. fieldlookup:: week
 
-    Allowed chaining additional field lookups.
+``week``
+~~~~~~~~
+
+.. versionadded:: 1.11
+
+For date and datetime fields, return the week number (1-52 or 53) according
+to `ISO-8601 <https://en.wikipedia.org/wiki/ISO-8601>`_, i.e., weeks start
+on a Monday and the first week starts on or before Thursday.
+
+Example::
+
+    Entry.objects.filter(pub_date__week=52)
+    Entry.objects.filter(pub_date__week__gte=32, pub_date__week__lte=38)
+
+(No equivalent SQL code fragment is included for this lookup because
+implementation of the relevant query varies among different database engines.)
+
+When :setting:`USE_TZ` is ``True``, fields are converted to the current time
+zone before filtering.
 
 .. fieldlookup:: week_day
 
-week_day
-~~~~~~~~
+``week_day``
+~~~~~~~~~~~~
 
 For date and datetime fields, a 'day of the week' match. Allows chaining
 additional field lookups.
@@ -2634,14 +2788,31 @@ When :setting:`USE_TZ` is ``True``, datetime fields are converted to the
 current time zone before filtering. This requires :ref:`time zone definitions
 in the database <database-time-zone-definitions>`.
 
-.. versionchanged:: 1.9
+.. fieldlookup:: time
 
-    Allowed chaining additional field lookups.
+``time``
+~~~~~~~~
+
+.. versionadded:: 1.11
+
+For datetime fields, casts the value as time. Allows chaining additional field
+lookups. Takes a :class:`datetime.time` value.
+
+Example::
+
+    Entry.objects.filter(pub_date__time=datetime.time(14, 30))
+    Entry.objects.filter(pub_date__time__between=(datetime.time(8), datetime.time(17)))
+
+(No equivalent SQL code fragment is included for this lookup because
+implementation of the relevant query varies among different database engines.)
+
+When :setting:`USE_TZ` is ``True``, fields are converted to the current time
+zone before filtering.
 
 .. fieldlookup:: hour
 
-hour
-~~~~
+``hour``
+~~~~~~~~
 
 For datetime and time fields, an exact hour match. Allows chaining additional
 field lookups. Takes an integer between 0 and 23.
@@ -2663,19 +2834,10 @@ SQL equivalent::
 For datetime fields, when :setting:`USE_TZ` is ``True``, values are converted
 to the current time zone before filtering.
 
-.. versionchanged:: 1.9
-
-    Added support for :class:`~django.db.models.TimeField` on SQLite (other
-    databases supported it as of 1.7).
-
-.. versionchanged:: 1.9
-
-    Allowed chaining additional field lookups.
-
 .. fieldlookup:: minute
 
-minute
-~~~~~~
+``minute``
+~~~~~~~~~~
 
 For datetime and time fields, an exact minute match. Allows chaining additional
 field lookups. Takes an integer between 0 and 59.
@@ -2697,19 +2859,10 @@ SQL equivalent::
 For datetime fields, When :setting:`USE_TZ` is ``True``, values are converted
 to the current time zone before filtering.
 
-.. versionchanged:: 1.9
-
-    Added support for :class:`~django.db.models.TimeField` on SQLite (other
-    databases supported it as of 1.7).
-
-.. versionchanged:: 1.9
-
-    Allowed chaining additional field lookups.
-
 .. fieldlookup:: second
 
-second
-~~~~~~
+``second``
+~~~~~~~~~~
 
 For datetime and time fields, an exact second match. Allows chaining additional
 field lookups. Takes an integer between 0 and 59.
@@ -2731,19 +2884,10 @@ SQL equivalent::
 For datetime fields, when :setting:`USE_TZ` is ``True``, values are converted
 to the current time zone before filtering.
 
-.. versionchanged:: 1.9
-
-    Added support for :class:`~django.db.models.TimeField` on SQLite (other
-    databases supported it as of 1.7).
-
-.. versionchanged:: 1.9
-
-    Allowed chaining additional field lookups.
-
 .. fieldlookup:: isnull
 
-isnull
-~~~~~~
+``isnull``
+~~~~~~~~~~
 
 Takes either ``True`` or ``False``, which correspond to SQL queries of
 ``IS NULL`` and ``IS NOT NULL``, respectively.
@@ -2756,32 +2900,10 @@ SQL equivalent::
 
     SELECT ... WHERE pub_date IS NULL;
 
-.. fieldlookup:: search
-
-search
-~~~~~~
-
-A boolean full-text search, taking advantage of full-text indexing. This is
-like :lookup:`contains` but is significantly faster due to full-text indexing.
-
-Example::
-
-    Entry.objects.filter(headline__search="+Django -jazz Python")
-
-SQL equivalent::
-
-    SELECT ... WHERE MATCH(tablename, headline) AGAINST (+Django -jazz Python IN BOOLEAN MODE);
-
-Note this is only available in MySQL and requires direct manipulation of the
-database to add the full-text index. By default Django uses BOOLEAN MODE for
-full text searches. See the `MySQL documentation`_ for additional details.
-
-.. _MySQL documentation: https://dev.mysql.com/doc/refman/5.6/en/fulltext-boolean.html
-
 .. fieldlookup:: regex
 
-regex
-~~~~~
+``regex``
+~~~~~~~~~
 
 Case-sensitive regular expression match.
 
@@ -2809,8 +2931,8 @@ regular expression syntax is recommended.
 
 .. fieldlookup:: iregex
 
-iregex
-~~~~~~
+``iregex``
+~~~~~~~~~~
 
 Case-insensitive regular expression match.
 
@@ -2882,8 +3004,8 @@ of the return value
 Keyword arguments that can provide extra context for the SQL generated
 by the aggregate.
 
-Avg
-~~~
+``Avg``
+~~~~~~~
 
 .. class:: Avg(expression, output_field=FloatField(), **extra)
 
@@ -2894,13 +3016,8 @@ Avg
     * Return type: ``float`` (or the type of whatever ``output_field`` is
       specified)
 
-    .. versionchanged:: 1.9
-
-        The ``output_field`` parameter was added to allow aggregating over
-        non-numeric columns, such as ``DurationField``.
-
-Count
-~~~~~
+``Count``
+~~~~~~~~~
 
 .. class:: Count(expression, distinct=False, **extra)
 
@@ -2918,8 +3035,8 @@ Count
         This is the SQL equivalent of ``COUNT(DISTINCT <field>)``. The default
         value is ``False``.
 
-Max
-~~~
+``Max``
+~~~~~~~
 
 .. class:: Max(expression, output_field=None, **extra)
 
@@ -2928,8 +3045,8 @@ Max
     * Default alias: ``<field>__max``
     * Return type: same as input field, or ``output_field`` if supplied
 
-Min
-~~~
+``Min``
+~~~~~~~
 
 .. class:: Min(expression, output_field=None, **extra)
 
@@ -2938,8 +3055,8 @@ Min
     * Default alias: ``<field>__min``
     * Return type: same as input field, or ``output_field`` if supplied
 
-StdDev
-~~~~~~
+``StdDev``
+~~~~~~~~~~
 
 .. class:: StdDev(expression, sample=False, **extra)
 
@@ -2962,8 +3079,8 @@ StdDev
         documentation`_ for instructions on obtaining and installing this
         extension.
 
-Sum
-~~~
+``Sum``
+~~~~~~~
 
 .. class:: Sum(expression, output_field=None, **extra)
 
@@ -2972,8 +3089,8 @@ Sum
     * Default alias: ``<field>__sum``
     * Return type: same as input field, or ``output_field`` if supplied
 
-Variance
-~~~~~~~~
+``Variance``
+~~~~~~~~~~~~
 
 .. class:: Variance(expression, sample=False, **extra)
 
@@ -2998,8 +3115,8 @@ Variance
 
 .. _SQLite documentation: https://www.sqlite.org/contrib
 
-Query-related classes
-=====================
+Query-related tools
+===================
 
 This section provides reference material for query-related tools not documented
 elsewhere.
@@ -3030,6 +3147,7 @@ The ``lookup`` argument describes the relations to follow and works the same
 as the string based lookups passed to
 :meth:`~django.db.models.query.QuerySet.prefetch_related()`. For example:
 
+    >>> from django.db.models import Prefetch
     >>> Question.objects.prefetch_related(Prefetch('choice_set')).get().choice_set.all()
     <QuerySet [<Choice: Not much>, <Choice: The sky>, <Choice: Just hacking again>]>
     # This will only execute two queries regardless of the number of Question
@@ -3064,3 +3182,19 @@ attribute:
     provide a significant speed improvement over traditional
     ``prefetch_related`` calls which store the cached result within a
     ``QuerySet`` instance.
+
+``prefetch_related_objects()``
+------------------------------
+
+.. function:: prefetch_related_objects(model_instances, *related_lookups)
+
+Prefetches the given lookups on an iterable of model instances. This is useful
+in code that receives a list of model instances as opposed to a ``QuerySet``;
+for example, when fetching models from a cache or instantiating them manually.
+
+Pass an iterable of model instances (must all be of the same class) and the
+lookups or :class:`Prefetch` objects you want to prefetch for. For example::
+
+    >>> from django.db.models import prefetch_related_objects
+    >>> restaurants = fetch_top_restaurants_from_cache()  # A list of Restaurants
+    >>> prefetch_related_objects(restaurants, 'pizzas__toppings')

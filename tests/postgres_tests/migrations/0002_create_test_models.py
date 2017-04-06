@@ -1,9 +1,12 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
+from django.core.serializers.json import DjangoJSONEncoder
 from django.db import migrations, models
 
-from ..fields import *  # NOQA
+from ..fields import (
+    ArrayField, BigIntegerRangeField, CICharField, CIEmailField, CITextField,
+    DateRangeField, DateTimeRangeField, FloatRangeField, HStoreField,
+    IntegerRangeField, JSONField, SearchVectorField,
+)
+from ..models import TagField
 
 
 class Migration(migrations.Migration):
@@ -55,6 +58,7 @@ class Migration(migrations.Migration):
                 ('ips', ArrayField(models.GenericIPAddressField(), size=None)),
                 ('uuids', ArrayField(models.UUIDField(), size=None)),
                 ('decimals', ArrayField(models.DecimalField(max_digits=5, decimal_places=2), size=None)),
+                ('tags', ArrayField(TagField(), blank=True, null=True, size=None)),
             ],
             options={
                 'required_db_vendor': 'postgresql',
@@ -113,6 +117,52 @@ class Migration(migrations.Migration):
             bases=None,
         ),
         migrations.CreateModel(
+            name='Scene',
+            fields=[
+                ('id', models.AutoField(verbose_name='ID', serialize=False, auto_created=True, primary_key=True)),
+                ('scene', models.CharField(max_length=255)),
+                ('setting', models.CharField(max_length=255)),
+            ],
+            options=None,
+            bases=None,
+        ),
+        migrations.CreateModel(
+            name='Character',
+            fields=[
+                ('id', models.AutoField(verbose_name='ID', serialize=False, auto_created=True, primary_key=True)),
+                ('name', models.CharField(max_length=255)),
+            ],
+            options=None,
+            bases=None,
+        ),
+        migrations.CreateModel(
+            name='CITestModel',
+            fields=[
+                ('name', CICharField(primary_key=True, max_length=255)),
+                ('email', CIEmailField()),
+                ('description', CITextField()),
+            ],
+            options={
+                'required_db_vendor': 'postgresql',
+            },
+            bases=None,
+        ),
+        migrations.CreateModel(
+            name='Line',
+            fields=[
+                ('id', models.AutoField(verbose_name='ID', serialize=False, auto_created=True, primary_key=True)),
+                ('scene', models.ForeignKey('postgres_tests.Scene', on_delete=models.SET_NULL)),
+                ('character', models.ForeignKey('postgres_tests.Character', on_delete=models.SET_NULL)),
+                ('dialogue', models.TextField(blank=True, null=True)),
+                ('dialogue_search_vector', SearchVectorField(blank=True, null=True)),
+                ('dialogue_config', models.CharField(max_length=100, blank=True, null=True)),
+            ],
+            options={
+                'required_db_vendor': 'postgresql',
+            },
+            bases=None,
+        ),
+        migrations.CreateModel(
             name='AggregateTestModel',
             fields=[
                 ('id', models.AutoField(verbose_name='ID', serialize=False, auto_created=True, primary_key=True)),
@@ -141,9 +191,6 @@ class Migration(migrations.Migration):
                 ('when', models.DateTimeField(null=True, default=None)),
             ]
         ),
-    ]
-
-    pg_92_operations = [
         migrations.CreateModel(
             name='RangesModel',
             fields=[
@@ -178,29 +225,16 @@ class Migration(migrations.Migration):
             },
             bases=(models.Model,),
         ),
-    ]
-
-    pg_94_operations = [
         migrations.CreateModel(
             name='JSONModel',
             fields=[
                 ('id', models.AutoField(verbose_name='ID', serialize=False, auto_created=True, primary_key=True)),
                 ('field', JSONField(null=True, blank=True)),
+                ('field_custom', JSONField(null=True, blank=True, encoder=DjangoJSONEncoder)),
             ],
             options={
+                'required_db_features': {'has_jsonb_datatype'},
             },
             bases=(models.Model,),
         ),
     ]
-
-    def apply(self, project_state, schema_editor, collect_sql=False):
-        try:
-            PG_VERSION = schema_editor.connection.pg_version
-        except AttributeError:
-            pass  # We are probably not on PostgreSQL
-        else:
-            if PG_VERSION >= 90200:
-                self.operations = self.operations + self.pg_92_operations
-            if PG_VERSION >= 90400:
-                self.operations = self.operations + self.pg_94_operations
-        return super(Migration, self).apply(project_state, schema_editor, collect_sql)

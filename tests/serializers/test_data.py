@@ -6,8 +6,6 @@ test case that is capable of testing the capabilities of
 the serializers. This includes all valid data values, plus
 forward, backwards and self references.
 """
-from __future__ import unicode_literals
-
 import datetime
 import decimal
 import uuid
@@ -15,7 +13,6 @@ import uuid
 from django.core import serializers
 from django.db import connection, models
 from django.test import TestCase
-from django.utils import six
 
 from .models import (
     Anchor, AutoNowDateTimeData, BigIntegerData, BinaryData, BooleanData,
@@ -120,15 +117,19 @@ def inherited_create(pk, klass, data):
 def data_compare(testcase, pk, klass, data):
     instance = klass.objects.get(id=pk)
     if klass == BinaryData and data is not None:
-        testcase.assertEqual(bytes(data), bytes(instance.data),
-             "Objects with PK=%d not equal; expected '%s' (%s), got '%s' (%s)" % (
-                 pk, repr(bytes(data)), type(data), repr(bytes(instance.data)),
-                 type(instance.data))
+        testcase.assertEqual(
+            bytes(data), bytes(instance.data),
+            "Objects with PK=%d not equal; expected '%s' (%s), got '%s' (%s)" % (
+                pk, repr(bytes(data)), type(data), repr(bytes(instance.data)),
+                type(instance.data),
+            )
         )
     else:
-        testcase.assertEqual(data, instance.data,
-             "Objects with PK=%d not equal; expected '%s' (%s), got '%s' (%s)" % (
-                 pk, data, type(data), instance, type(instance.data))
+        testcase.assertEqual(
+            data, instance.data,
+            "Objects with PK=%d not equal; expected '%s' (%s), got '%s' (%s)" % (
+                pk, data, type(data), instance, type(instance.data),
+            )
         )
 
 
@@ -178,6 +179,7 @@ def inherited_compare(testcase, pk, klass, data):
     for key, value in data.items():
         testcase.assertEqual(value, getattr(instance, key))
 
+
 # Define some data types. Each data type is
 # actually a pair of functions; one to create
 # and one to compare objects of that type
@@ -194,7 +196,7 @@ uuid_obj = uuid.uuid4()
 
 test_data = [
     # Format: (data type, PK value, Model Class, data)
-    (data_obj, 1, BinaryData, six.memoryview(b"\x05\xFD\x00")),
+    (data_obj, 1, BinaryData, memoryview(b"\x05\xFD\x00")),
     (data_obj, 2, BinaryData, None),
     (data_obj, 5, BooleanData, True),
     (data_obj, 6, BooleanData, False),

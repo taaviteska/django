@@ -1,8 +1,3 @@
-# -*- coding: utf-8 -*-
-from __future__ import unicode_literals
-
-import datetime
-
 from django.contrib import admin
 from django.contrib.admin.sites import AdminSite
 from django.contrib.auth.models import User
@@ -20,34 +15,21 @@ from .admin import MediaInline, MediaPermanentInline, site as admin_site
 from .models import Category, Episode, EpisodePermanent, Media, PhoneNumber
 
 
-class TestDataMixin(object):
+class TestDataMixin:
 
     @classmethod
     def setUpTestData(cls):
-        # password = "secret"
-        User.objects.create(
-            pk=100, username='super', first_name='Super', last_name='User', email='super@example.com',
-            password='sha1$995a3$6011485ea3834267d719b4c801409b8b1ddd0158', is_active=True, is_superuser=True,
-            is_staff=True, last_login=datetime.datetime(2007, 5, 30, 13, 20, 10),
-            date_joined=datetime.datetime(2007, 5, 30, 13, 20, 10)
-        )
+        cls.superuser = User.objects.create_superuser(username='super', password='secret', email='super@example.com')
 
 
 # Set DEBUG to True to ensure {% include %} will raise exceptions.
 # That is how inlines are rendered and #9498 will bubble up if it is an issue.
-@override_settings(
-    DEBUG=True,
-    PASSWORD_HASHERS=['django.contrib.auth.hashers.SHA1PasswordHasher'],
-    ROOT_URLCONF="generic_inline_admin.urls",
-)
+@override_settings(DEBUG=True, ROOT_URLCONF='generic_inline_admin.urls')
 class GenericAdminViewTest(TestDataMixin, TestCase):
 
     def setUp(self):
-        self.client.login(username='super', password='secret')
+        self.client.force_login(self.superuser)
 
-        # Can't load content via a fixture (since the GenericForeignKey
-        # relies on content type IDs, which will vary depending on what
-        # other tests have been run), thus we do it here.
         e = Episode.objects.create(name='This Week in Django')
         self.episode_pk = e.pk
         m = Media(content_object=e, url='http://example.com/podcast.mp3')
@@ -206,8 +188,7 @@ class GenericAdminViewTest(TestDataMixin, TestCase):
 
     def test_generic_inline_formset_factory(self):
         # Regression test for #10522.
-        inline_formset = generic_inlineformset_factory(Media,
-            exclude=('url',))
+        inline_formset = generic_inlineformset_factory(Media, exclude=('url',))
 
         # Regression test for #12340.
         e = Episode.objects.get(name='This Week in Django')
@@ -215,12 +196,11 @@ class GenericAdminViewTest(TestDataMixin, TestCase):
         self.assertTrue(formset.get_queryset().ordered)
 
 
-@override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.SHA1PasswordHasher'],
-                   ROOT_URLCONF="generic_inline_admin.urls")
+@override_settings(ROOT_URLCONF='generic_inline_admin.urls')
 class GenericInlineAdminParametersTest(TestDataMixin, TestCase):
 
     def setUp(self):
-        self.client.login(username='super', password='secret')
+        self.client.force_login(self.superuser)
         self.factory = RequestFactory()
 
     def _create_object(self, model):
@@ -361,12 +341,11 @@ class GenericInlineAdminParametersTest(TestDataMixin, TestCase):
         self.assertEqual(formset.max_num, 2)
 
 
-@override_settings(PASSWORD_HASHERS=['django.contrib.auth.hashers.SHA1PasswordHasher'],
-                   ROOT_URLCONF="generic_inline_admin.urls")
+@override_settings(ROOT_URLCONF='generic_inline_admin.urls')
 class GenericInlineAdminWithUniqueTogetherTest(TestDataMixin, TestCase):
 
     def setUp(self):
-        self.client.login(username='super', password='secret')
+        self.client.force_login(self.superuser)
 
     def test_add(self):
         category_id = Category.objects.create(name='male').pk
@@ -397,7 +376,7 @@ class GenericInlineAdminWithUniqueTogetherTest(TestDataMixin, TestCase):
         self.assertContains(response, 'Are you sure you want to delete')
 
 
-@override_settings(ROOT_URLCONF="generic_inline_admin.urls")
+@override_settings(ROOT_URLCONF='generic_inline_admin.urls')
 class NoInlineDeletionTest(SimpleTestCase):
 
     def test_no_deletion(self):
@@ -407,19 +386,20 @@ class NoInlineDeletionTest(SimpleTestCase):
         self.assertFalse(formset.can_delete)
 
 
-class MockRequest(object):
+class MockRequest:
     pass
 
 
-class MockSuperUser(object):
+class MockSuperUser:
     def has_perm(self, perm):
         return True
+
 
 request = MockRequest()
 request.user = MockSuperUser()
 
 
-@override_settings(ROOT_URLCONF="generic_inline_admin.urls")
+@override_settings(ROOT_URLCONF='generic_inline_admin.urls')
 class GenericInlineModelAdminTest(SimpleTestCase):
 
     def setUp(self):
@@ -431,16 +411,16 @@ class GenericInlineModelAdminTest(SimpleTestCase):
         # Create a formset with default arguments
         formset = media_inline.get_formset(request)
         self.assertEqual(formset.max_num, DEFAULT_MAX_NUM)
-        self.assertEqual(formset.can_order, False)
+        self.assertIs(formset.can_order, False)
 
         # Create a formset with custom keyword arguments
         formset = media_inline.get_formset(request, max_num=100, can_order=True)
         self.assertEqual(formset.max_num, 100)
-        self.assertEqual(formset.can_order, True)
+        self.assertIs(formset.can_order, True)
 
     def test_custom_form_meta_exclude_with_readonly(self):
         """
-        Ensure that the custom ModelForm's `Meta.exclude` is respected when
+        The custom ModelForm's `Meta.exclude` is respected when
         used in conjunction with `GenericInlineModelAdmin.readonly_fields`
         and when no `ModelAdmin.exclude` is defined.
         """
@@ -467,7 +447,7 @@ class GenericInlineModelAdminTest(SimpleTestCase):
 
     def test_custom_form_meta_exclude(self):
         """
-        Ensure that the custom ModelForm's `Meta.exclude` is respected by
+        The custom ModelForm's `Meta.exclude` is respected by
         `GenericInlineModelAdmin.get_formset`, and overridden if
         `ModelAdmin.exclude` or `GenericInlineModelAdmin.exclude` are defined.
         Refs #15907.
@@ -512,7 +492,7 @@ class GenericInlineModelAdminTest(SimpleTestCase):
             ['description', 'keywords', 'id', 'DELETE'])
 
     def test_get_fieldsets(self):
-        # Test that get_fieldsets is called when figuring out form fields.
+        # get_fieldsets is called when figuring out form fields.
         # Refs #18681.
         class MediaForm(ModelForm):
             class Meta:
@@ -533,7 +513,7 @@ class GenericInlineModelAdminTest(SimpleTestCase):
 
     def test_get_formsets_with_inlines_returns_tuples(self):
         """
-        Ensure that get_formsets_with_inlines() returns the correct tuples.
+        get_formsets_with_inlines() returns the correct tuples.
         """
         class MediaForm(ModelForm):
             class Meta:

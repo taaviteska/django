@@ -1,9 +1,7 @@
-from __future__ import unicode_literals
-
 from datetime import datetime
 from operator import attrgetter
 
-from django.test import TestCase
+from django.test import TestCase, skipUnlessDBFeature
 
 from .models import (
     CustomMembership, Employee, Event, Friendship, Group, Ingredient,
@@ -198,6 +196,21 @@ class M2mThroughTests(TestCase):
             attrgetter("name")
         )
 
+    @skipUnlessDBFeature('supports_microsecond_precision')
+    def test_order_by_relational_field_through_model(self):
+        CustomMembership.objects.create(person=self.jim, group=self.rock)
+        CustomMembership.objects.create(person=self.bob, group=self.rock)
+        CustomMembership.objects.create(person=self.jane, group=self.roll)
+        CustomMembership.objects.create(person=self.jim, group=self.roll)
+        self.assertSequenceEqual(
+            self.rock.custom_members.order_by('custom_person_related_name'),
+            [self.jim, self.bob]
+        )
+        self.assertSequenceEqual(
+            self.roll.custom_members.order_by('custom_person_related_name'),
+            [self.jane, self.jim]
+        )
+
     def test_query_first_model_by_intermediate_model_attribute(self):
         Membership.objects.create(
             person=self.jane, group=self.roll,
@@ -326,7 +339,7 @@ class M2mThroughTests(TestCase):
 
     def test_through_fields(self):
         """
-        Tests that relations with intermediary tables with multiple FKs
+        Relations with intermediary tables with multiple FKs
         to the M2M's ``to`` model are possible.
         """
         event = Event.objects.create(title='Rockwhale 2014')
@@ -445,10 +458,7 @@ class M2mThroughToFieldsTests(TestCase):
 
     def test_retrieval(self):
         # Forward retrieval
-        self.assertQuerysetEqual(
-            self.curry.ingredients.all(),
-            [self.pea, self.potato, self.tomato], lambda x: x
-        )
+        self.assertSequenceEqual(self.curry.ingredients.all(), [self.pea, self.potato, self.tomato])
         # Backward retrieval
         self.assertEqual(self.tomato.recipes.get(), self.curry)
 

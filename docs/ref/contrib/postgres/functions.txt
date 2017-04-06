@@ -1,3 +1,4 @@
+======================================
 PostgreSQL specific database functions
 ======================================
 
@@ -6,12 +7,10 @@ All of these functions are available from the
 
 .. currentmodule:: django.contrib.postgres.functions
 
-TransactionNow
---------------
+``TransactionNow``
+==================
 
 .. class:: TransactionNow()
-
-.. versionadded:: 1.9
 
 Returns the date and time on the database server that the current transaction
 started. If you are not in a transaction it will return the date and time of

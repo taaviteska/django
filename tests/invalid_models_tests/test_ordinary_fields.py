@@ -1,6 +1,3 @@
-# -*- encoding: utf-8 -*-
-from __future__ import unicode_literals
-
 import unittest
 
 from django.core.checks import Error, Warning as DjangoWarning
@@ -37,7 +34,6 @@ class AutoFieldTests(SimpleTestCase):
         expected = [
             Error(
                 'AutoFields must set primary_key=True.',
-                hint=None,
                 obj=field,
                 id='fields.E100',
             ),
@@ -92,7 +88,6 @@ class CharFieldTests(TestCase):
         expected = [
             Error(
                 "CharFields must define a 'max_length' attribute.",
-                hint=None,
                 obj=field,
                 id='fields.E120',
             ),
@@ -108,7 +103,6 @@ class CharFieldTests(TestCase):
         expected = [
             Error(
                 "'max_length' must be a positive integer.",
-                hint=None,
                 obj=field,
                 id='fields.E121',
             ),
@@ -124,7 +118,6 @@ class CharFieldTests(TestCase):
         expected = [
             Error(
                 "'max_length' must be a positive integer.",
-                hint=None,
                 obj=field,
                 id='fields.E121',
             ),
@@ -140,7 +133,6 @@ class CharFieldTests(TestCase):
         expected = [
             Error(
                 "'max_length' must be a positive integer.",
-                hint=None,
                 obj=field,
                 id='fields.E121',
             ),
@@ -156,12 +148,32 @@ class CharFieldTests(TestCase):
         expected = [
             Error(
                 "'choices' must be an iterable (e.g., a list or tuple).",
-                hint=None,
                 obj=field,
                 id='fields.E004',
             ),
         ]
         self.assertEqual(errors, expected)
+
+    def test_iterable_of_iterable_choices(self):
+        class ThingItem:
+            def __init__(self, value, display):
+                self.value = value
+                self.display = display
+
+            def __iter__(self):
+                return (x for x in [self.value, self.display])
+
+            def __len__(self):
+                return 2
+
+        class Things:
+            def __iter__(self):
+                return (x for x in [ThingItem(1, 2), ThingItem(3, 4)])
+
+        class ThingWithIterableChoices(models.Model):
+            thing = models.CharField(max_length=100, blank=True, choices=Things())
+
+        self.assertEqual(ThingWithIterableChoices._meta.get_field('thing').check(), [])
 
     def test_choices_containing_non_pairs(self):
         class Model(models.Model):
@@ -172,7 +184,6 @@ class CharFieldTests(TestCase):
         expected = [
             Error(
                 "'choices' must be an iterable containing (actual value, human readable name) tuples.",
-                hint=None,
                 obj=field,
                 id='fields.E005',
             ),
@@ -188,12 +199,28 @@ class CharFieldTests(TestCase):
         expected = [
             Error(
                 "'db_index' must be None, True or False.",
-                hint=None,
                 obj=field,
                 id='fields.E006',
             ),
         ]
         self.assertEqual(errors, expected)
+
+    def test_bad_validators(self):
+        class Model(models.Model):
+            field = models.CharField(max_length=10, validators=[True])
+
+        field = Model._meta.get_field('field')
+        self.assertEqual(field.check(), [
+            Error(
+                "All 'validators' must be callable.",
+                hint=(
+                    "validators[0] (True) isn't a function or instance of a "
+                    "validator class."
+                ),
+                obj=field,
+                id='fields.E008',
+            ),
+        ])
 
     @unittest.skipUnless(connection.vendor == 'mysql',
                          "Test valid only for MySQL")
@@ -204,12 +231,11 @@ class CharFieldTests(TestCase):
             field = models.CharField(unique=True, max_length=256)
 
         field = Model._meta.get_field('field')
-        validator = DatabaseValidation(connection=None)
+        validator = DatabaseValidation(connection=connection)
         errors = validator.check_field(field)
         expected = [
             Error(
                 'MySQL does not allow unique CharFields to have a max_length > 255.',
-                hint=None,
                 obj=field,
                 id='mysql.E001',
             )
@@ -235,7 +261,6 @@ class DateFieldTests(TestCase):
                 "The options auto_now, auto_now_add, and default "
                 "are mutually exclusive. Only one of these options "
                 "may be present.",
-                hint=None,
                 obj=field,
                 id='fields.E160',
             ))
@@ -341,13 +366,11 @@ class DecimalFieldTests(SimpleTestCase):
         expected = [
             Error(
                 "DecimalFields must define a 'decimal_places' attribute.",
-                hint=None,
                 obj=field,
                 id='fields.E130',
             ),
             Error(
                 "DecimalFields must define a 'max_digits' attribute.",
-                hint=None,
                 obj=field,
                 id='fields.E132',
             ),
@@ -363,13 +386,11 @@ class DecimalFieldTests(SimpleTestCase):
         expected = [
             Error(
                 "'decimal_places' must be a non-negative integer.",
-                hint=None,
                 obj=field,
                 id='fields.E131',
             ),
             Error(
                 "'max_digits' must be a positive integer.",
-                hint=None,
                 obj=field,
                 id='fields.E133',
             ),
@@ -385,13 +406,11 @@ class DecimalFieldTests(SimpleTestCase):
         expected = [
             Error(
                 "'decimal_places' must be a non-negative integer.",
-                hint=None,
                 obj=field,
                 id='fields.E131',
             ),
             Error(
                 "'max_digits' must be a positive integer.",
-                hint=None,
                 obj=field,
                 id='fields.E133',
             ),
@@ -407,7 +426,6 @@ class DecimalFieldTests(SimpleTestCase):
         expected = [
             Error(
                 "'max_digits' must be greater or equal to 'decimal_places'.",
-                hint=None,
                 obj=field,
                 id='fields.E134',
             ),
@@ -427,6 +445,12 @@ class DecimalFieldTests(SimpleTestCase):
 @isolate_apps('invalid_models_tests')
 class FileFieldTests(SimpleTestCase):
 
+    def test_valid_default_case(self):
+        class Model(models.Model):
+            field = models.FileField()
+
+        self.assertEqual(Model._meta.get_field('field').check(), [])
+
     def test_valid_case(self):
         class Model(models.Model):
             field = models.FileField(upload_to='somewhere')
@@ -434,22 +458,6 @@ class FileFieldTests(SimpleTestCase):
         field = Model._meta.get_field('field')
         errors = field.check()
         expected = []
-        self.assertEqual(errors, expected)
-
-    def test_unique(self):
-        class Model(models.Model):
-            field = models.FileField(unique=False, upload_to='somewhere')
-
-        field = Model._meta.get_field('field')
-        errors = field.check()
-        expected = [
-            Error(
-                "'unique' is not a valid argument for a FileField.",
-                hint=None,
-                obj=field,
-                id='fields.E200',
-            )
-        ]
         self.assertEqual(errors, expected)
 
     def test_primary_key(self):
@@ -461,12 +469,36 @@ class FileFieldTests(SimpleTestCase):
         expected = [
             Error(
                 "'primary_key' is not a valid argument for a FileField.",
-                hint=None,
                 obj=field,
                 id='fields.E201',
             )
         ]
         self.assertEqual(errors, expected)
+
+    def test_upload_to_starts_with_slash(self):
+        class Model(models.Model):
+            field = models.FileField(upload_to='/somewhere')
+
+        field = Model._meta.get_field('field')
+        self.assertEqual(field.check(), [
+            Error(
+                "FileField's 'upload_to' argument must be a relative path, not "
+                "an absolute path.",
+                obj=field,
+                id='fields.E202',
+                hint='Remove the leading slash.',
+            )
+        ])
+
+    def test_upload_to_callable_not_checked(self):
+        def callable(instance, filename):
+            return '/' + filename
+
+        class Model(models.Model):
+            field = models.FileField(upload_to=callable)
+
+        field = Model._meta.get_field('field')
+        self.assertEqual(field.check(), [])
 
 
 @isolate_apps('invalid_models_tests')
@@ -481,7 +513,6 @@ class FilePathFieldTests(SimpleTestCase):
         expected = [
             Error(
                 "FilePathFields must have either 'allow_files' or 'allow_folders' set to True.",
-                hint=None,
                 obj=field,
                 id='fields.E140',
             ),
@@ -502,7 +533,6 @@ class GenericIPAddressFieldTests(SimpleTestCase):
             Error(
                 ('GenericIPAddressFields cannot have blank=True if null=False, '
                  'as blank values are stored as nulls.'),
-                hint=None,
                 obj=field,
                 id='fields.E150',
             ),

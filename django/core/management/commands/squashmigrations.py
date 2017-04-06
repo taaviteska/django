@@ -5,7 +5,6 @@ from django.db.migrations.loader import AmbiguityError, MigrationLoader
 from django.db.migrations.migration import SwappableTuple
 from django.db.migrations.optimizer import MigrationOptimizer
 from django.db.migrations.writer import MigrationWriter
-from django.utils import six
 from django.utils.version import get_docs_version
 
 
@@ -13,22 +12,31 @@ class Command(BaseCommand):
     help = "Squashes an existing set of migrations (from first until specified) into a single new one."
 
     def add_arguments(self, parser):
-        parser.add_argument('app_label',
-            help='App label of the application to squash migrations for.')
-        parser.add_argument('start_migration_name', default=None, nargs='?',
-            help='Migrations will be squashed starting from and including this migration.')
-        parser.add_argument('migration_name',
-            help='Migrations will be squashed until and including this migration.')
-        parser.add_argument('--no-optimize', action='store_true', dest='no_optimize', default=False,
-            help='Do not try to optimize the squashed operations.')
-        parser.add_argument('--noinput', '--no-input',
-            action='store_false', dest='interactive', default=True,
-            help='Tells Django to NOT prompt the user for input of any kind.')
+        parser.add_argument(
+            'app_label',
+            help='App label of the application to squash migrations for.',
+        )
+        parser.add_argument(
+            'start_migration_name', default=None, nargs='?',
+            help='Migrations will be squashed starting from and including this migration.',
+        )
+        parser.add_argument(
+            'migration_name',
+            help='Migrations will be squashed until and including this migration.',
+        )
+        parser.add_argument(
+            '--no-optimize', action='store_true', dest='no_optimize',
+            help='Do not try to optimize the squashed operations.',
+        )
+        parser.add_argument(
+            '--noinput', '--no-input', action='store_false', dest='interactive',
+            help='Tells Django to NOT prompt the user for input of any kind.',
+        )
 
     def handle(self, **options):
 
-        self.verbosity = options.get('verbosity')
-        self.interactive = options.get('interactive')
+        self.verbosity = options['verbosity']
+        self.interactive = options['interactive']
         app_label = options['app_label']
         start_migration_name = options['start_migration_name']
         migration_name = options['migration_name']
@@ -75,7 +83,7 @@ class Command(BaseCommand):
             if self.interactive:
                 answer = None
                 while not answer or answer not in "yn":
-                    answer = six.moves.input("Do you wish to proceed? [yN] ")
+                    answer = input("Do you wish to proceed? [yN] ")
                     if not answer:
                         answer = "n"
                         break
@@ -153,7 +161,7 @@ class Command(BaseCommand):
 
         # Write out the new migration file
         writer = MigrationWriter(new_migration)
-        with open(writer.path, "wb") as fh:
+        with open(writer.path, "w", encoding='utf-8') as fh:
             fh.write(writer.as_string())
 
         if self.verbosity > 0:

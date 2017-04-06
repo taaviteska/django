@@ -3,7 +3,7 @@ Classes to represent the definitions of aggregate functions.
 """
 from django.core.exceptions import FieldError
 from django.db.models.expressions import Func, Star
-from django.db.models.fields import FloatField, IntegerField
+from django.db.models.fields import DecimalField, FloatField, IntegerField
 
 __all__ = [
     'Aggregate', 'Avg', 'Count', 'Max', 'Min', 'StdDev', 'Sum', 'Variance',
@@ -16,7 +16,7 @@ class Aggregate(Func):
 
     def resolve_expression(self, query=None, allow_joins=True, reuse=None, summarize=False, for_save=False):
         # Aggregates are not allowed in UPDATE queries, so ignore for_save
-        c = super(Aggregate, self).resolve_expression(query, allow_joins, reuse, summarize)
+        c = super().resolve_expression(query, allow_joins, reuse, summarize)
         if not summarize:
             expressions = c.get_source_expressions()
             for index, expr in enumerate(expressions):
@@ -41,9 +41,11 @@ class Avg(Aggregate):
     function = 'AVG'
     name = 'Avg'
 
-    def __init__(self, expression, **extra):
-        output_field = extra.pop('output_field', FloatField())
-        super(Avg, self).__init__(expression, output_field=output_field, **extra)
+    def _resolve_output_field(self):
+        source_field = self.get_source_fields()[0]
+        if isinstance(source_field, (IntegerField, DecimalField)):
+            self._output_field = FloatField()
+        super()._resolve_output_field()
 
     def as_oracle(self, compiler, connection):
         if self.output_field.get_internal_type() == 'DurationField':
@@ -52,7 +54,7 @@ class Avg(Aggregate):
             return compiler.compile(
                 SecondsToInterval(Avg(IntervalToSeconds(expression)))
             )
-        return super(Avg, self).as_sql(compiler, connection)
+        return super().as_sql(compiler, connection)
 
 
 class Count(Aggregate):
@@ -63,8 +65,10 @@ class Count(Aggregate):
     def __init__(self, expression, distinct=False, **extra):
         if expression == '*':
             expression = Star()
-        super(Count, self).__init__(
-            expression, distinct='DISTINCT ' if distinct else '', output_field=IntegerField(), **extra)
+        super().__init__(
+            expression, distinct='DISTINCT ' if distinct else '',
+            output_field=IntegerField(), **extra
+        )
 
     def __repr__(self):
         return "{}({}, distinct={})".format(
@@ -94,7 +98,7 @@ class StdDev(Aggregate):
 
     def __init__(self, expression, sample=False, **extra):
         self.function = 'STDDEV_SAMP' if sample else 'STDDEV_POP'
-        super(StdDev, self).__init__(expression, output_field=FloatField(), **extra)
+        super().__init__(expression, output_field=FloatField(), **extra)
 
     def __repr__(self):
         return "{}({}, sample={})".format(
@@ -120,7 +124,7 @@ class Sum(Aggregate):
             return compiler.compile(
                 SecondsToInterval(Sum(IntervalToSeconds(expression)))
             )
-        return super(Sum, self).as_sql(compiler, connection)
+        return super().as_sql(compiler, connection)
 
 
 class Variance(Aggregate):
@@ -128,7 +132,7 @@ class Variance(Aggregate):
 
     def __init__(self, expression, sample=False, **extra):
         self.function = 'VAR_SAMP' if sample else 'VAR_POP'
-        super(Variance, self).__init__(expression, output_field=FloatField(), **extra)
+        super().__init__(expression, output_field=FloatField(), **extra)
 
     def __repr__(self):
         return "{}({}, sample={})".format(

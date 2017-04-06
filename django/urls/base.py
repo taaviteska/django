@@ -1,11 +1,8 @@
-from __future__ import unicode_literals
-
 from threading import local
+from urllib.parse import urlsplit, urlunsplit
 
-from django.utils import six
-from django.utils.encoding import force_text, iri_to_uri
+from django.utils.encoding import iri_to_uri
 from django.utils.functional import lazy
-from django.utils.six.moves.urllib.parse import urlsplit, urlunsplit
 from django.utils.translation import override
 
 from .exceptions import NoReverseMatch, Resolver404
@@ -36,7 +33,7 @@ def reverse(viewname, urlconf=None, args=None, kwargs=None, current_app=None):
 
     prefix = get_script_prefix()
 
-    if not isinstance(viewname, six.string_types):
+    if not isinstance(viewname, str):
         view = viewname
     else:
         parts = viewname.split(':')
@@ -88,9 +85,10 @@ def reverse(viewname, urlconf=None, args=None, kwargs=None, current_app=None):
         if ns_pattern:
             resolver = get_ns_resolver(ns_pattern, resolver)
 
-    return force_text(iri_to_uri(resolver._reverse_with_prefix(view, prefix, *args, **kwargs)))
+    return iri_to_uri(resolver._reverse_with_prefix(view, prefix, *args, **kwargs))
 
-reverse_lazy = lazy(reverse, six.text_type)
+
+reverse_lazy = lazy(reverse, str)
 
 
 def clear_url_caches():
@@ -153,7 +151,6 @@ def is_valid_path(path, urlconf=None):
     False otherwise. This is a convenience method to make working with "is
     this a match?" cases easier, avoiding try...except blocks.
     """
-    from django.urls.base import resolve
     try:
         resolve(path, urlconf)
         return True
@@ -167,7 +164,6 @@ def translate_url(url, lang_code):
     the `lang_code` language (either by i18n_patterns or by translated regex).
     Return the original URL if no translated version is found.
     """
-    from django.urls import resolve, reverse
     parsed = urlsplit(url)
     try:
         match = resolve(parsed.path)

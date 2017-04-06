@@ -22,6 +22,8 @@ import os
 from argparse import ArgumentParser
 from subprocess import PIPE, Popen, call
 
+import django
+from django.conf import settings
 from django.core.management import call_command
 
 HAVE_JS = ['admin']
@@ -83,6 +85,8 @@ def update_catalogs(resources=None, languages=None):
     Update the en/LC_MESSAGES/django.po (main and contrib) files with
     new/updated translatable strings.
     """
+    settings.configure()
+    django.setup()
     if resources is not None:
         print("`update_catalogs` will always process all resources.")
     contrib_dirs = _get_locale_dirs(None, include_core=False)
@@ -169,10 +173,8 @@ if __name__ == "__main__":
 
     parser = ArgumentParser()
     parser.add_argument('cmd', nargs=1, choices=RUNABLE_SCRIPTS)
-    parser.add_argument("-r", "--resources", action='append',
-        help="limit operation to the specified resources")
-    parser.add_argument("-l", "--languages", action='append',
-        help="limit operation to the specified languages")
+    parser.add_argument("-r", "--resources", action='append', help="limit operation to the specified resources")
+    parser.add_argument("-l", "--languages", action='append', help="limit operation to the specified languages")
     options = parser.parse_args()
 
     eval(options.cmd[0])(options.resources, options.languages)

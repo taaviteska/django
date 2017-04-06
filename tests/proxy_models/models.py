@@ -5,7 +5,6 @@ than using a new table of their own. This allows them to act as simple proxies,
 providing a modified interface to the data from the base class.
 """
 from django.db import models
-from django.utils.encoding import python_2_unicode_compatible
 
 
 # A couple of managers for testing managing overriding in proxy model cases.
@@ -13,15 +12,14 @@ from django.utils.encoding import python_2_unicode_compatible
 
 class PersonManager(models.Manager):
     def get_queryset(self):
-        return super(PersonManager, self).get_queryset().exclude(name="fred")
+        return super().get_queryset().exclude(name="fred")
 
 
 class SubManager(models.Manager):
     def get_queryset(self):
-        return super(SubManager, self).get_queryset().exclude(name="wilma")
+        return super().get_queryset().exclude(name="wilma")
 
 
-@python_2_unicode_compatible
 class Person(models.Model):
     """
     A simple concrete base class.
@@ -85,6 +83,8 @@ class StatusPerson(MyPerson):
     """
     status = models.CharField(max_length=80)
 
+    objects = models.Manager()
+
 # We can even have proxies of proxies (and subclass of those).
 
 
@@ -96,8 +96,9 @@ class MyPersonProxy(MyPerson):
 class LowerStatusPerson(MyPersonProxy):
     status = models.CharField(max_length=80)
 
+    objects = models.Manager()
 
-@python_2_unicode_compatible
+
 class User(models.Model):
     name = models.CharField(max_length=100)
 
@@ -110,7 +111,17 @@ class UserProxy(User):
         proxy = True
 
 
+class AnotherUserProxy(User):
+    class Meta:
+        proxy = True
+
+
 class UserProxyProxy(UserProxy):
+    class Meta:
+        proxy = True
+
+
+class MultiUserProxy(UserProxy, AnotherUserProxy):
     class Meta:
         proxy = True
 
@@ -121,7 +132,6 @@ class Country(models.Model):
     name = models.CharField(max_length=50)
 
 
-@python_2_unicode_compatible
 class State(models.Model):
     name = models.CharField(max_length=50)
     country = models.ForeignKey(Country, models.CASCADE)
@@ -138,7 +148,6 @@ class StateProxy(State):
 # and select_related, even when mixed with model inheritance
 
 
-@python_2_unicode_compatible
 class BaseUser(models.Model):
     name = models.CharField(max_length=255)
 
@@ -155,7 +164,6 @@ class ProxyTrackerUser(TrackerUser):
         proxy = True
 
 
-@python_2_unicode_compatible
 class Issue(models.Model):
     summary = models.CharField(max_length=255)
     assignee = models.ForeignKey(ProxyTrackerUser, models.CASCADE, related_name='issues')

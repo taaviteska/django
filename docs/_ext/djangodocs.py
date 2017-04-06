@@ -9,6 +9,7 @@ from docutils import nodes
 from docutils.parsers.rst import directives
 from sphinx import addnodes
 from sphinx.builders.html import StandaloneHTMLBuilder
+from sphinx.domains.std import Cmdoption
 from sphinx.util.compat import Directive
 from sphinx.util.console import bold
 from sphinx.util.nodes import set_source_info
@@ -46,12 +47,7 @@ def setup(app):
         indextemplate="pair: %s; django-admin command",
         parse_node=parse_django_admin_node,
     )
-    app.add_description_unit(
-        directivename="django-admin-option",
-        rolename="djadminopt",
-        indextemplate="pair: %s; django-admin command-line option",
-        parse_node=parse_django_adminopt_node,
-    )
+    app.add_directive('django-admin-option', Cmdoption)
     app.add_config_value('django_next_version', '0.0', True)
     app.add_directive('versionadded', VersionDirective)
     app.add_directive('versionchanged', VersionDirective)
@@ -67,6 +63,9 @@ def setup(app):
                  man=(visit_snippet_literal, depart_snippet_literal),
                  text=(visit_snippet_literal, depart_snippet_literal),
                  texinfo=(visit_snippet_literal, depart_snippet_literal))
+    app.set_translator('djangohtml', DjangoHTMLTranslator)
+    app.set_translator('json', DjangoHTMLTranslator)
+    return {'parallel_read_safe': True}
 
 
 class snippet_with_filename(nodes.literal_block):
@@ -113,7 +112,7 @@ def visit_snippet(self, node):
                                                    linenos=linenos,
                                                    **highlight_args)
     starttag = self.starttag(node, 'div', suffix='',
-                             CLASS='highlight-%s' % lang)
+                             CLASS='highlight-%s snippet' % lang)
     self.body.append(starttag)
     self.body.append('<div class="snippet-filename">%s</div>\n''' % (fname,))
     self.body.append(highlighted)
@@ -294,39 +293,10 @@ class DjangoHTMLTranslator(SmartyPantsHTMLTranslator):
 
 def parse_django_admin_node(env, sig, signode):
     command = sig.split(' ')[0]
-    env._django_curr_admin_command = command
+    env.ref_context['std:program'] = command
     title = "django-admin %s" % sig
     signode += addnodes.desc_name(title, title)
-    return sig
-
-
-def parse_django_adminopt_node(env, sig, signode):
-    """A copy of sphinx.directives.CmdoptionDesc.parse_signature()"""
-    from sphinx.domains.std import option_desc_re
-    count = 0
-    firstname = ''
-    for m in option_desc_re.finditer(sig):
-        optname, args = m.groups()
-        if count:
-            signode += addnodes.desc_addname(', ', ', ')
-        signode += addnodes.desc_name(optname, optname)
-        signode += addnodes.desc_addname(args, args)
-        if not count:
-            firstname = optname
-        count += 1
-    if not count:
-        for m in simple_option_desc_re.finditer(sig):
-            optname, args = m.groups()
-            if count:
-                signode += addnodes.desc_addname(', ', ', ')
-            signode += addnodes.desc_name(optname, optname)
-            signode += addnodes.desc_addname(args, args)
-            if not count:
-                firstname = optname
-            count += 1
-    if not firstname:
-        raise ValueError
-    return firstname
+    return command
 
 
 class DjangoStandaloneHTMLBuilder(StandaloneHTMLBuilder):
@@ -337,14 +307,18 @@ class DjangoStandaloneHTMLBuilder(StandaloneHTMLBuilder):
     name = 'djangohtml'
 
     def finish(self):
-        super(DjangoStandaloneHTMLBuilder, self).finish()
+        super().finish()
         self.info(bold("writing templatebuiltins.js..."))
         xrefs = self.env.domaindata["std"]["objects"]
         templatebuiltins = {
-            "ttags": [n for ((t, n), (l, a)) in xrefs.items()
-                      if t == "templatetag" and l == "ref/templates/builtins"],
-            "tfilters": [n for ((t, n), (l, a)) in xrefs.items()
-                         if t == "templatefilter" and l == "ref/templates/builtins"],
+            "ttags": [
+                n for ((t, n), (k, a)) in xrefs.items()
+                if t == "templatetag" and k == "ref/templates/builtins"
+            ],
+            "tfilters": [
+                n for ((t, n), (k, a)) in xrefs.items()
+                if t == "templatefilter" and k == "ref/templates/builtins"
+            ],
         }
         outfilename = os.path.join(self.outdir, "templatebuiltins.js")
         with open(outfilename, 'w') as fp:

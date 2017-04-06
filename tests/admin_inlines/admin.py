@@ -37,9 +37,10 @@ class EditablePKBookStackedInline(admin.StackedInline):
 
 
 class AuthorAdmin(admin.ModelAdmin):
-    inlines = [BookInline,
-        NonAutoPKBookTabularInline, NonAutoPKBookStackedInline,
-        EditablePKBookTabularInline, EditablePKBookStackedInline]
+    inlines = [
+        BookInline, NonAutoPKBookTabularInline, NonAutoPKBookStackedInline,
+        EditablePKBookTabularInline, EditablePKBookStackedInline,
+    ]
 
 
 class InnerInline(admin.StackedInline):
@@ -190,6 +191,10 @@ class SomeChildModelForm(forms.ModelForm):
         widgets = {
             'position': forms.HiddenInput,
         }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields['name'].label = 'new label'
 
 
 class SomeChildModelInline(admin.TabularInline):

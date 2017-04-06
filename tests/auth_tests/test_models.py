@@ -1,7 +1,8 @@
-import datetime
+from unittest import mock
 
 from django.conf.global_settings import PASSWORD_HASHERS
 from django.contrib.auth import get_user_model
+from django.contrib.auth.base_user import AbstractBaseUser
 from django.contrib.auth.hashers import get_hasher
 from django.contrib.auth.models import (
     AbstractUser, Group, Permission, User, UserManager,
@@ -9,52 +10,15 @@ from django.contrib.auth.models import (
 from django.contrib.contenttypes.models import ContentType
 from django.core import mail
 from django.db.models.signals import post_save
-from django.test import TestCase, mock, override_settings
+from django.test import TestCase, override_settings
+
+from .models.with_custom_email_field import CustomEmailField
 
 
-@override_settings(USE_TZ=False)
 class NaturalKeysTestCase(TestCase):
 
-    @classmethod
-    def setUpTestData(cls):
-        cls.u1 = User.objects.create(
-            password='sha1$6efc0$f93efe9fd7542f25a7be94871ea45aa95de57161',
-            last_login=datetime.datetime(2006, 12, 17, 7, 3, 31), is_superuser=False, username='testclient',
-            first_name='Test', last_name='Client', email='testclient@example.com', is_staff=False, is_active=True,
-            date_joined=datetime.datetime(2006, 12, 17, 7, 3, 31)
-        )
-        cls.u2 = User.objects.create(
-            password='sha1$6efc0$f93efe9fd7542f25a7be94871ea45aa95de57161',
-            last_login=datetime.datetime(2006, 12, 17, 7, 3, 31), is_superuser=False, username='inactive',
-            first_name='Inactive', last_name='User', email='testclient2@example.com', is_staff=False, is_active=False,
-            date_joined=datetime.datetime(2006, 12, 17, 7, 3, 31)
-        )
-        cls.u3 = User.objects.create(
-            password='sha1$6efc0$f93efe9fd7542f25a7be94871ea45aa95de57161',
-            last_login=datetime.datetime(2006, 12, 17, 7, 3, 31), is_superuser=False, username='staff',
-            first_name='Staff', last_name='Member', email='staffmember@example.com', is_staff=True, is_active=True,
-            date_joined=datetime.datetime(2006, 12, 17, 7, 3, 31)
-        )
-        cls.u4 = User.objects.create(
-            password='', last_login=datetime.datetime(2006, 12, 17, 7, 3, 31), is_superuser=False,
-            username='empty_password', first_name='Empty', last_name='Password', email='empty_password@example.com',
-            is_staff=False, is_active=True, date_joined=datetime.datetime(2006, 12, 17, 7, 3, 31)
-        )
-        cls.u5 = User.objects.create(
-            password='$', last_login=datetime.datetime(2006, 12, 17, 7, 3, 31), is_superuser=False,
-            username='unmanageable_password', first_name='Unmanageable', last_name='Password',
-            email='unmanageable_password@example.com', is_staff=False, is_active=True,
-            date_joined=datetime.datetime(2006, 12, 17, 7, 3, 31)
-        )
-        cls.u6 = User.objects.create(
-            password='foo$bar', last_login=datetime.datetime(2006, 12, 17, 7, 3, 31), is_superuser=False,
-            username='unknown_password', first_name='Unknown', last_name='Password',
-            email='unknown_password@example.com', is_staff=False, is_active=True,
-            date_joined=datetime.datetime(2006, 12, 17, 7, 3, 31)
-        )
-
     def test_user_natural_key(self):
-        staff_user = User.objects.get(username='staff')
+        staff_user = User.objects.create_user(username='staff')
         self.assertEqual(User.objects.get_by_natural_key('staff'), staff_user)
         self.assertEqual(staff_user.natural_key(), ('staff',))
 
@@ -63,7 +27,6 @@ class NaturalKeysTestCase(TestCase):
         self.assertEqual(Group.objects.get_by_natural_key('users'), users_group)
 
 
-@override_settings(USE_TZ=False)
 class LoadDataWithoutNaturalKeysTestCase(TestCase):
     fixtures = ['regular.json']
 
@@ -73,7 +36,6 @@ class LoadDataWithoutNaturalKeysTestCase(TestCase):
         self.assertEqual(group, user.groups.get())
 
 
-@override_settings(USE_TZ=False)
 class LoadDataWithNaturalKeysTestCase(TestCase):
     fixtures = ['natural.json']
 
@@ -157,15 +119,12 @@ class UserManagerTestCase(TestCase):
         self.assertEqual(returned, 'normal@domain.com')
 
     def test_create_user_email_domain_normalize_with_whitespace(self):
-        returned = UserManager.normalize_email('email\ with_whitespace@D.COM')
-        self.assertEqual(returned, 'email\ with_whitespace@d.com')
+        returned = UserManager.normalize_email(r'email\ with_whitespace@D.COM')
+        self.assertEqual(returned, r'email\ with_whitespace@d.com')
 
     def test_empty_username(self):
-        self.assertRaisesMessage(
-            ValueError,
-            'The given username must be set',
-            User.objects.create_user, username=''
-        )
+        with self.assertRaisesMessage(ValueError, 'The given username must be set'):
+            User.objects.create_user(username='')
 
     def test_create_user_is_staff(self):
         email = 'normal@normal.com'
@@ -188,6 +147,36 @@ class UserManagerTestCase(TestCase):
                 password='test', is_staff=False,
             )
 
+    def test_make_random_password(self):
+        allowed_chars = 'abcdefg'
+        password = UserManager().make_random_password(5, allowed_chars)
+        self.assertEqual(len(password), 5)
+        for char in password:
+            self.assertIn(char, allowed_chars)
+
+
+class AbstractBaseUserTests(TestCase):
+
+    def test_clean_normalize_username(self):
+        # The normalization happens in AbstractBaseUser.clean()
+        ohm_username = 'iamtheΩ'  # U+2126 OHM SIGN
+        for model in ('auth.User', 'auth_tests.CustomUser'):
+            with self.settings(AUTH_USER_MODEL=model):
+                User = get_user_model()
+                user = User(**{User.USERNAME_FIELD: ohm_username, 'password': 'foo'})
+                user.clean()
+                username = user.get_username()
+                self.assertNotEqual(username, ohm_username)
+                self.assertEqual(username, 'iamtheΩ')  # U+03A9 GREEK CAPITAL LETTER OMEGA
+
+    def test_default_email(self):
+        user = AbstractBaseUser()
+        self.assertEqual(user.get_email_field_name(), 'email')
+
+    def test_custom_email(self):
+        user = CustomEmailField()
+        self.assertEqual(user.get_email_field_name(), 'email_address')
+
 
 class AbstractUserTestCase(TestCase):
     def test_email_user(self):
@@ -200,11 +189,13 @@ class AbstractUserTestCase(TestCase):
             "html_message": None,
         }
         abstract_user = AbstractUser(email='foo@bar.com')
-        abstract_user.email_user(subject="Subject here",
-            message="This is a message", from_email="from@domain.com", **kwargs)
-        # Test that one message has been sent.
+        abstract_user.email_user(
+            subject="Subject here",
+            message="This is a message",
+            from_email="from@domain.com",
+            **kwargs
+        )
         self.assertEqual(len(mail.outbox), 1)
-        # Verify that test email contains the correct attributes:
         message = mail.outbox[0]
         self.assertEqual(message.subject, "Subject here")
         self.assertEqual(message.body, "This is a message")
@@ -217,6 +208,11 @@ class AbstractUserTestCase(TestCase):
 
         user2 = User.objects.create_user(username='user2')
         self.assertIsNone(user2.last_login)
+
+    def test_user_clean_normalize_email(self):
+        user = User(username='user', password='foo', email='foo@BAR.com')
+        user.clean()
+        self.assertEqual(user.email, 'foo@bar.com')
 
     def test_user_double_save(self):
         """
@@ -262,7 +258,7 @@ class IsActiveTestCase(TestCase):
     def test_builtin_user_isactive(self):
         user = User.objects.create(username='foo', email='foo@bar.com')
         # is_active is true by default
-        self.assertEqual(user.is_active, True)
+        self.assertIs(user.is_active, True)
         user.is_active = False
         user.save()
         user_fetched = User.objects.get(pk=user.pk)
@@ -276,14 +272,14 @@ class IsActiveTestCase(TestCase):
         """
         UserModel = get_user_model()
         user = UserModel(username='foo')
-        self.assertEqual(user.is_active, True)
+        self.assertIs(user.is_active, True)
         # you can set the attribute - but it will not save
         user.is_active = False
         # there should be no problem saving - but the attribute is not saved
         user.save()
         user_fetched = UserModel._default_manager.get(pk=user.pk)
         # the attribute is always true for newly retrieved instance
-        self.assertEqual(user_fetched.is_active, True)
+        self.assertIs(user_fetched.is_active, True)
 
 
 class TestCreateSuperUserSignals(TestCase):

@@ -1,23 +1,18 @@
 import json
+import pickle
 import unittest
 from binascii import b2a_hex
 from unittest import skipUnless
 
 from django.contrib.gis.gdal import HAS_GDAL
-from django.utils.six.moves import range
 
 from ..test_data import TestDataMixin
 
-try:
-    from django.utils.six.moves import cPickle as pickle
-except ImportError:
-    import pickle
-
-
 if HAS_GDAL:
-    from django.contrib.gis.gdal import (OGRGeometry, OGRGeomType,
-        GDALException, OGRIndexError, SpatialReference, CoordTransform,
-        GDAL_VERSION)
+    from django.contrib.gis.gdal import (
+        CoordTransform, GDALException, OGRGeometry, OGRGeomType, OGRIndexError,
+        SpatialReference,
+    )
 
 
 @skipUnless(HAS_GDAL, "GDAL is required")
@@ -36,9 +31,12 @@ class OGRGeomTest(unittest.TestCase, TestDataMixin):
         OGRGeomType('Unknown')
 
         # Should throw TypeError on this input
-        self.assertRaises(GDALException, OGRGeomType, 23)
-        self.assertRaises(GDALException, OGRGeomType, 'fooD')
-        self.assertRaises(GDALException, OGRGeomType, 9)
+        with self.assertRaises(GDALException):
+            OGRGeomType(23)
+        with self.assertRaises(GDALException):
+            OGRGeomType('fooD')
+        with self.assertRaises(GDALException):
+            OGRGeomType(9)
 
         # Equivalence can take strings, ints, and other OGRGeomTypes
         self.assertEqual(OGRGeomType(1), OGRGeomType(1))
@@ -90,10 +88,6 @@ class OGRGeomTest(unittest.TestCase, TestDataMixin):
         for g in self.geometries.wkt_out:
             geom = OGRGeometry(g.wkt)
             exp_gml = g.gml
-            if GDAL_VERSION >= (1, 8):
-                # In GDAL 1.8, the non-conformant GML tag  <gml:GeometryCollection> was
-                # replaced with <gml:MultiGeometry>.
-                exp_gml = exp_gml.replace('GeometryCollection', 'MultiGeometry')
             self.assertEqual(exp_gml, geom.gml)
 
     def test_hex(self):
@@ -168,7 +162,8 @@ class OGRGeomTest(unittest.TestCase, TestDataMixin):
             self.assertEqual(ls.coords, linestr.tuple)
             self.assertEqual(linestr, OGRGeometry(ls.wkt))
             self.assertNotEqual(linestr, prev)
-            self.assertRaises(OGRIndexError, linestr.__getitem__, len(linestr))
+            with self.assertRaises(OGRIndexError):
+                linestr.__getitem__(len(linestr))
             prev = linestr
 
             # Testing the x, y properties.
@@ -192,7 +187,8 @@ class OGRGeomTest(unittest.TestCase, TestDataMixin):
             for ls in mlinestr:
                 self.assertEqual(2, ls.geom_type)
                 self.assertEqual('LINESTRING', ls.geom_name)
-            self.assertRaises(OGRIndexError, mlinestr.__getitem__, len(mlinestr))
+            with self.assertRaises(OGRIndexError):
+                mlinestr.__getitem__(len(mlinestr))
 
     def test_linearring(self):
         "Testing LinearRing objects."
@@ -263,7 +259,8 @@ class OGRGeomTest(unittest.TestCase, TestDataMixin):
             if mp.valid:
                 self.assertEqual(mp.n_p, mpoly.point_count)
                 self.assertEqual(mp.num_geom, len(mpoly))
-                self.assertRaises(OGRIndexError, mpoly.__getitem__, len(mpoly))
+                with self.assertRaises(OGRIndexError):
+                    mpoly.__getitem__(len(mpoly))
                 for p in mpoly:
                     self.assertEqual('POLYGON', p.geom_name)
                     self.assertEqual(3, p.geom_type)
@@ -415,7 +412,8 @@ class OGRGeomTest(unittest.TestCase, TestDataMixin):
         # Can't insert a Point into a MultiPolygon.
         mp = OGRGeometry('MultiPolygon')
         pnt = OGRGeometry('POINT(5 23)')
-        self.assertRaises(GDALException, mp.add, pnt)
+        with self.assertRaises(GDALException):
+            mp.add(pnt)
 
         # GeometryCollection.add may take an OGRGeometry (if another collection
         # of the same type all child geoms will be added individually) or WKT.
@@ -535,3 +533,21 @@ class OGRGeomTest(unittest.TestCase, TestDataMixin):
             OGRGeometry('POINT(0.5 0.5)').within(OGRGeometry('POLYGON ((0 0, 0 1, 1 1, 1 0, 0 0))')), True
         )
         self.assertIs(OGRGeometry('POINT(0 0)').within(OGRGeometry('POINT(0 1)')), False)
+
+    def test_from_gml(self):
+        self.assertEqual(
+            OGRGeometry('POINT(0 0)'),
+            OGRGeometry.from_gml(
+                '<gml:Point gml:id="p21" srsName="http://www.opengis.net/def/crs/EPSG/0/4326">'
+                '    <gml:pos srsDimension="2">0 0</gml:pos>'
+                '</gml:Point>'
+            ),
+        )
+
+    def test_empty(self):
+        self.assertIs(OGRGeometry('POINT (0 0)').empty, False)
+        self.assertIs(OGRGeometry('POINT EMPTY').empty, True)
+
+    def test_empty_point_to_geos(self):
+        p = OGRGeometry('POINT EMPTY', srs=4326)
+        self.assertEqual(p.geos.ewkt, p.ewkt)

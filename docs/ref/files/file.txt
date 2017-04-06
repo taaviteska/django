@@ -1,3 +1,4 @@
+===================
 The ``File`` object
 ===================
 
@@ -6,8 +7,8 @@ for basic file handling in Django.
 
 .. currentmodule:: django.core.files
 
-The ``File`` Class
-------------------
+The ``File`` class
+==================
 
 .. class:: File(file_object)
 
@@ -29,6 +30,17 @@ The ``File`` Class
     .. attribute:: file
 
         The underlying :py:term:`file object` that this class wraps.
+
+        .. admonition:: Be careful with this attribute in subclasses.
+
+            Some subclasses of :class:`File`, including
+            :class:`~django.core.files.base.ContentFile` and
+            :class:`~django.db.models.fields.files.FieldFile`, may replace this
+            attribute with an object other than a Python :py:term:`file object`.
+            In these cases, this attribute may itself be a :class:`File`
+            subclass (and not necessarily the same subclass). Whenever
+            possible, use the attributes and methods of the subclass itself
+            rather than the those of the subclass's ``file`` attribute.
 
     .. attribute:: mode
 
@@ -80,17 +92,17 @@ The ``File`` Class
     the following attributes and methods of its ``file`` object:
     ``encoding``, ``fileno``, ``flush``, ``isatty``, ``newlines``,
     ``read``, ``readinto``, ``readlines``, ``seek``, ``softspace``, ``tell``,
-    ``truncate``, ``writelines``, ``xreadlines``. If you are using
-    Python 3, the ``seekable`` method is also available.
+    ``truncate``, ``writelines``, ``xreadlines``, ``readable()``,
+    ``writable()``, and ``seekable()``.
 
-    .. versionchanged:: 1.9
+    .. versionchanged:: 1.11
 
-        The ``seekable`` method was added.
+        The ``readable()`` and ``writable()`` methods were added.
 
 .. currentmodule:: django.core.files.base
 
-The ``ContentFile`` Class
--------------------------
+The ``ContentFile`` class
+=========================
 
 .. class:: ContentFile(File)
 
@@ -98,7 +110,6 @@ The ``ContentFile`` Class
     but unlike :class:`~django.core.files.File` it operates on string content
     (bytes also supported), rather than an actual file. For example::
 
-        from __future__ import unicode_literals
         from django.core.files.base import ContentFile
 
         f1 = ContentFile("esta sentencia está en español")
@@ -106,8 +117,8 @@ The ``ContentFile`` Class
 
 .. currentmodule:: django.core.files.images
 
-The ``ImageFile`` Class
------------------------
+The ``ImageFile`` class
+=======================
 
 .. class:: ImageFile(file_object)
 
@@ -127,7 +138,7 @@ The ``ImageFile`` Class
 .. currentmodule:: django.core.files
 
 Additional methods on files attached to objects
------------------------------------------------
+===============================================
 
 Any :class:`File` that is associated with an object (as with ``Car.photo``,
 below) will also have a couple of extra methods:

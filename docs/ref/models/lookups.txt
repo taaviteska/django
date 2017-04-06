@@ -31,7 +31,7 @@ A lookup expression consists of three parts:
 .. _lookup-registration-api:
 
 Registration API
-~~~~~~~~~~~~~~~~
+================
 
 Django uses :class:`~lookups.RegisterLookupMixin` to give a class the interface to
 register lookups on itself. The two prominent examples are
@@ -49,10 +49,6 @@ register lookups on itself. The two prominent examples are
         lookup on ``DateField``. It overrides a lookup that already exists with
         the same name. ``lookup_name`` will be used for this lookup if
         provided, otherwise ``lookup.lookup_name`` will be used.
-
-        .. versionchanged:: 1.9
-
-            The ``lookup_name`` parameter was added.
 
     .. method:: get_lookup(lookup_name)
 
@@ -75,7 +71,7 @@ follow this API.
 .. _query-expression:
 
 The Query Expression API
-~~~~~~~~~~~~~~~~~~~~~~~~
+========================
 
 The query expression API is a common set of methods that classes define to be
 usable in query expressions to translate themselves into SQL expressions. Direct
@@ -83,7 +79,7 @@ field references, aggregates, and ``Transform`` are examples that follow this
 API. A class is said to follow the query expression API when it implements the
 following methods:
 
-.. method:: as_sql(self, compiler, connection)
+.. method:: as_sql(compiler, connection)
 
     Responsible for producing the query string and parameters for the expression.
     The ``compiler`` is an ``SQLCompiler`` object, which has a ``compile()``
@@ -94,7 +90,12 @@ following methods:
     ``compiler.compile(expression)`` should be used. The ``compiler.compile()``
     method will take care of calling vendor-specific methods of the expression.
 
-.. method:: as_vendorname(self, compiler, connection)
+    Custom keyword arguments may be defined on this method if it's likely that
+    ``as_vendorname()`` methods or subclasses will need to supply data to
+    override the generation of the SQL string. See :meth:`Func.as_sql` for
+    example usage.
+
+.. method:: as_vendorname(compiler, connection)
 
     Works like ``as_sql()`` method. When an expression is compiled by
     ``compiler.compile()``, Django will first try to call ``as_vendorname()``,
@@ -117,8 +118,8 @@ following methods:
     Defines the type of class returned by the ``get_lookup()`` method. It must
     be a :class:`~django.db.models.Field` instance.
 
-Transform reference
-~~~~~~~~~~~~~~~~~~~
+``Transform`` reference
+=======================
 
 .. class:: Transform
 
@@ -134,10 +135,6 @@ Transform reference
     a specialized :ref:`Func() expression <func-expressions>` that only accepts
     one argument.  It can also be used on the right hand side of a filter or
     directly as an annotation.
-
-    .. versionchanged:: 1.9
-
-        ``Transform`` is now a subclass of ``Func``.
 
     .. attribute:: bilateral
 
@@ -162,8 +159,8 @@ Transform reference
         :class:`~django.db.models.Field` instance. By default is the same as
         its ``lhs.output_field``.
 
-Lookup reference
-~~~~~~~~~~~~~~~~
+``Lookup`` reference
+====================
 
 .. class:: Lookup
 

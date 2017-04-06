@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import datetime
 import pickle
 from decimal import Decimal
@@ -9,11 +7,11 @@ from django.contrib.contenttypes.models import ContentType
 from django.core.exceptions import FieldError
 from django.db import connection
 from django.db.models import (
-    F, Q, Avg, Count, Max, StdDev, Sum, Value, Variance,
+    Avg, Case, Count, DecimalField, F, IntegerField, Max, Q, StdDev, Sum,
+    Value, Variance, When,
 )
 from django.test import TestCase, skipUnlessAnyDBFeature, skipUnlessDBFeature
 from django.test.utils import Approximate
-from django.utils import six
 
 from .models import (
     Alfa, Author, Book, Bravo, Charlie, Clues, Entries, HardbackBook, ItemTag,
@@ -104,15 +102,28 @@ class AggregationTests(TestCase):
         s3.books.add(cls.b3, cls.b4, cls.b6)
 
     def assertObjectAttrs(self, obj, **kwargs):
-        for attr, value in six.iteritems(kwargs):
+        for attr, value in kwargs.items():
             self.assertEqual(getattr(obj, attr), value)
+
+    def test_annotation_with_value(self):
+        values = Book.objects.filter(
+            name='Practical Django Projects',
+        ).annotate(
+            discount_price=F('price') * 2,
+        ).values(
+            'discount_price',
+        ).annotate(sum_discount=Sum('discount_price'))
+        self.assertSequenceEqual(
+            values,
+            [{'discount_price': Decimal('59.38'), 'sum_discount': Decimal('59.38')}]
+        )
 
     def test_aggregates_in_where_clause(self):
         """
         Regression test for #12822: DatabaseError: aggregates not allowed in
         WHERE clause
 
-        Tests that the subselect works and returns results equivalent to a
+        The subselect works and returns results equivalent to a
         query with the IDs listed.
 
         Before the corresponding fix for this bug, this test passed in 1.1 and
@@ -295,11 +306,10 @@ class AggregationTests(TestCase):
         # If an annotation isn't included in the values, it can still be used
         # in a filter
         qs = Book.objects.annotate(n_authors=Count('authors')).values('name').filter(n_authors__gt=2)
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {"name": 'Python Web Development with Django'}
             ],
-            lambda b: b,
         )
 
         # The annotations are added to values output if values() precedes
@@ -311,14 +321,14 @@ class AggregationTests(TestCase):
             'name': 'The Definitive Guide to Django: Web Development Done Right',
         })
 
-        # Check that all of the objects are getting counted (allow_nulls) and
-        # that values respects the amount of objects
+        # All of the objects are getting counted (allow_nulls) and that values
+        # respects the amount of objects
         self.assertEqual(
             len(Author.objects.annotate(Avg('friends__age')).values()),
             9
         )
 
-        # Check that consecutive calls to annotate accumulate in the query
+        # Consecutive calls to annotate accumulate in the query
         qs = (
             Book.objects
             .values('price')
@@ -326,7 +336,7 @@ class AggregationTests(TestCase):
             .order_by('oldest', 'price')
             .annotate(Max('publisher__num_awards'))
         )
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {'price': Decimal("30"), 'oldest': 35, 'publisher__num_awards__max': 3},
                 {'price': Decimal("29.69"), 'oldest': 37, 'publisher__num_awards__max': 7},
@@ -334,10 +344,9 @@ class AggregationTests(TestCase):
                 {'price': Decimal("75"), 'oldest': 57, 'publisher__num_awards__max': 9},
                 {'price': Decimal("82.8"), 'oldest': 57, 'publisher__num_awards__max': 7}
             ],
-            lambda b: b,
         )
 
-    def test_aggrate_annotation(self):
+    def test_aggregate_annotation(self):
         # Aggregates can be composed over annotations.
         # The return type is derived from the composed aggregate
         vals = (
@@ -360,6 +369,51 @@ class AggregationTests(TestCase):
             {'c__max': 3}
         )
 
+    def test_conditional_aggreate(self):
+        # Conditional aggregation of a grouped queryset.
+        self.assertEqual(
+            Book.objects.annotate(c=Count('authors')).values('pk').aggregate(test=Sum(
+                Case(When(c__gt=1, then=1), output_field=IntegerField())
+            ))['test'],
+            3
+        )
+
+    def test_sliced_conditional_aggregate(self):
+        self.assertEqual(
+            Author.objects.all()[:5].aggregate(test=Sum(Case(
+                When(age__lte=35, then=1), output_field=IntegerField()
+            )))['test'],
+            3
+        )
+
+    def test_annotated_conditional_aggregate(self):
+        annotated_qs = Book.objects.annotate(discount_price=F('price') * 0.75)
+        self.assertAlmostEqual(
+            annotated_qs.aggregate(test=Avg(Case(
+                When(pages__lt=400, then='discount_price'),
+                output_field=DecimalField()
+            )))['test'],
+            22.27, places=2
+        )
+
+    def test_distinct_conditional_aggregate(self):
+        self.assertEqual(
+            Book.objects.distinct().aggregate(test=Avg(Case(
+                When(price=Decimal('29.69'), then='pages'),
+                output_field=IntegerField()
+            )))['test'],
+            325
+        )
+
+    def test_conditional_aggregate_on_complex_condition(self):
+        self.assertEqual(
+            Book.objects.distinct().aggregate(test=Avg(Case(
+                When(Q(price__gte=Decimal('29')) & Q(price__lt=Decimal('30')), then='pages'),
+                output_field=IntegerField()
+            )))['test'],
+            325
+        )
+
     def test_decimal_aggregate_annotation_filter(self):
         """
         Filtering on an aggregate annotation with Decimal values should work.
@@ -376,20 +430,14 @@ class AggregationTests(TestCase):
 
     def test_field_error(self):
         # Bad field requests in aggregates are caught and reported
-        self.assertRaises(
-            FieldError,
-            lambda: Book.objects.all().aggregate(num_authors=Count('foo'))
-        )
+        with self.assertRaises(FieldError):
+            Book.objects.all().aggregate(num_authors=Count('foo'))
 
-        self.assertRaises(
-            FieldError,
-            lambda: Book.objects.all().annotate(num_authors=Count('foo'))
-        )
+        with self.assertRaises(FieldError):
+            Book.objects.all().annotate(num_authors=Count('foo'))
 
-        self.assertRaises(
-            FieldError,
-            lambda: Book.objects.all().annotate(num_authors=Count('authors__id')).aggregate(Max('foo'))
-        )
+        with self.assertRaises(FieldError):
+            Book.objects.all().annotate(num_authors=Count('authors__id')).aggregate(Max('foo'))
 
     def test_more(self):
         # Old-style count aggregations can be mixed with new-style
@@ -480,12 +528,11 @@ class AggregationTests(TestCase):
             .order_by('name')
             .values('name', 'num_books', 'num_awards')
         )
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {'num_books': 1, 'name': 'Morgan Kaufmann', 'num_awards': 9},
                 {'num_books': 2, 'name': 'Prentice Hall', 'num_awards': 7}
             ],
-            lambda p: p,
         )
 
         qs = (
@@ -495,13 +542,12 @@ class AggregationTests(TestCase):
             .order_by('name')
             .values('name', 'num_books', 'num_awards')
         )
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {'num_books': 2, 'name': 'Apress', 'num_awards': 3},
                 {'num_books': 0, 'name': "Jonno's House of Books", 'num_awards': 0},
                 {'num_books': 1, 'name': 'Sams', 'num_awards': 1}
             ],
-            lambda p: p,
         )
 
         # ... and where the F() references an aggregate
@@ -512,12 +558,11 @@ class AggregationTests(TestCase):
             .order_by('name')
             .values('name', 'num_books', 'num_awards')
         )
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {'num_books': 1, 'name': 'Morgan Kaufmann', 'num_awards': 9},
                 {'num_books': 2, 'name': 'Prentice Hall', 'num_awards': 7}
             ],
-            lambda p: p,
         )
 
         qs = (
@@ -527,13 +572,12 @@ class AggregationTests(TestCase):
             .order_by('name')
             .values('name', 'num_books', 'num_awards')
         )
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {'num_books': 2, 'name': 'Apress', 'num_awards': 3},
                 {'num_books': 0, 'name': "Jonno's House of Books", 'num_awards': 0},
                 {'num_books': 1, 'name': 'Sams', 'num_awards': 1}
             ],
-            lambda p: p,
         )
 
     def test_db_col_table(self):
@@ -554,8 +598,7 @@ class AggregationTests(TestCase):
         e = Entries.objects.create(Entry='foo')
         c = Clues.objects.create(EntryID=e, Clue='bar')
         qs = Clues.objects.select_related('EntryID').annotate(Count('ID'))
-        self.assertQuerysetEqual(
-            qs, [c], lambda x: x)
+        self.assertSequenceEqual(qs, [c])
         self.assertEqual(qs[0].EntryID, e)
         self.assertIs(qs[0].EntryID.Exclude, False)
 
@@ -594,7 +637,7 @@ class AggregationTests(TestCase):
                 max_rating=Max('book__rating'),
             ).values()
         )
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs,
             [{
                 'max_authors': None,
@@ -606,7 +649,6 @@ class AggregationTests(TestCase):
                 'id': self.p5.id,
                 'avg_authors': None,
             }],
-            lambda p: p
         )
 
     def test_more_more(self):
@@ -646,14 +688,13 @@ class AggregationTests(TestCase):
         # Regression for #10132 - If the values() clause only mentioned extra
         # (select=) columns, those columns are used for grouping
         qs = Book.objects.extra(select={'pub': 'publisher_id'}).values('pub').annotate(Count('id')).order_by('pub')
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {'pub': self.b1.id, 'id__count': 2},
                 {'pub': self.b2.id, 'id__count': 1},
                 {'pub': self.b3.id, 'id__count': 2},
                 {'pub': self.b4.id, 'id__count': 1}
             ],
-            lambda b: b
         )
 
         qs = (
@@ -663,14 +704,13 @@ class AggregationTests(TestCase):
             .annotate(Count('id'))
             .order_by('pub')
         )
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 {'pub': self.p1.id, 'id__count': 2},
                 {'pub': self.p2.id, 'id__count': 1},
                 {'pub': self.p3.id, 'id__count': 2},
                 {'pub': self.p4.id, 'id__count': 1}
             ],
-            lambda b: b
         )
 
         # Regression for #10182 - Queries with aggregate calls are correctly
@@ -692,27 +732,25 @@ class AggregationTests(TestCase):
         # Regression for #15709 - Ensure each group_by field only exists once
         # per query
         qstr = str(Book.objects.values('publisher').annotate(max_pages=Max('pages')).order_by().query)
-        # Check that there is just one GROUP BY clause (zero commas means at
-        # most one clause)
+        # There is just one GROUP BY clause (zero commas means at most one clause).
         self.assertEqual(qstr[qstr.index('GROUP BY'):].count(', '), 0)
 
     def test_duplicate_alias(self):
         # Regression for #11256 - duplicating a default alias raises ValueError.
-        self.assertRaises(
-            ValueError,
-            Book.objects.all().annotate,
-            Avg('authors__age'), authors__age__avg=Avg('authors__age')
-        )
+        with self.assertRaises(ValueError):
+            Book.objects.all().annotate(Avg('authors__age'), authors__age__avg=Avg('authors__age'))
 
     def test_field_name_conflict(self):
         # Regression for #11256 - providing an aggregate name
         # that conflicts with a field name on the model raises ValueError
-        self.assertRaises(ValueError, Author.objects.annotate, age=Avg('friends__age'))
+        with self.assertRaises(ValueError):
+            Author.objects.annotate(age=Avg('friends__age'))
 
     def test_m2m_name_conflict(self):
         # Regression for #11256 - providing an aggregate name
         # that conflicts with an m2m name on the model raises ValueError
-        self.assertRaises(ValueError, Author.objects.annotate, friends=Count('friends'))
+        with self.assertRaises(ValueError):
+            Author.objects.annotate(friends=Count('friends'))
 
     def test_values_queryset_non_conflict(self):
         # Regression for #14707 -- If you're using a values query set, some potential conflicts are avoided.
@@ -739,7 +777,8 @@ class AggregationTests(TestCase):
     def test_reverse_relation_name_conflict(self):
         # Regression for #11256 - providing an aggregate name
         # that conflicts with a reverse-related name on the model raises ValueError
-        self.assertRaises(ValueError, Author.objects.annotate, book_contact_set=Avg('friends__age'))
+        with self.assertRaises(ValueError):
+            Author.objects.annotate(book_contact_set=Avg('friends__age'))
 
     def test_pickle(self):
         # Regression for #10197 -- Queries with aggregates can be pickled.
@@ -774,12 +813,11 @@ class AggregationTests(TestCase):
 
         # Regression for #10248 - Annotations work with dates()
         qs = Book.objects.annotate(num_authors=Count('authors')).filter(num_authors=2).dates('pubdate', 'day')
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs, [
                 datetime.date(1995, 1, 15),
                 datetime.date(2007, 12, 6),
             ],
-            lambda b: b
         )
 
         # Regression for #10290 - extra selects with parameters can be used for
@@ -873,7 +911,7 @@ class AggregationTests(TestCase):
         )
 
         qs = HardbackBook.objects.annotate(n_authors=Count('book_ptr__authors')).values('name', 'n_authors')
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs,
             [
                 {'n_authors': 2, 'name': 'Artificial Intelligence: A Modern Approach'},
@@ -882,11 +920,10 @@ class AggregationTests(TestCase):
                     'name': 'Paradigms of Artificial Intelligence Programming: Case Studies in Common Lisp'
                 }
             ],
-            lambda h: h
         )
 
         qs = HardbackBook.objects.annotate(n_authors=Count('authors')).values('name', 'n_authors')
-        self.assertQuerysetEqual(
+        self.assertSequenceEqual(
             qs,
             [
                 {'n_authors': 2, 'name': 'Artificial Intelligence: A Modern Approach'},
@@ -895,15 +932,12 @@ class AggregationTests(TestCase):
                     'name': 'Paradigms of Artificial Intelligence Programming: Case Studies in Common Lisp'
                 }
             ],
-            lambda h: h,
         )
 
         # Regression for #10766 - Shouldn't be able to reference an aggregate
         # fields in an aggregate() call.
-        self.assertRaises(
-            FieldError,
-            lambda: Book.objects.annotate(mean_age=Avg('authors__age')).annotate(Avg('mean_age'))
-        )
+        with self.assertRaises(FieldError):
+            Book.objects.annotate(mean_age=Avg('authors__age')).annotate(Avg('mean_age'))
 
     def test_empty_filter_count(self):
         self.assertEqual(
@@ -951,7 +985,7 @@ class AggregationTests(TestCase):
         self.assertEqual(list(qs), list(Book.objects.values_list("pk", flat=True)))
 
     def test_having_group_by(self):
-        # Test that when a field occurs on the LHS of a HAVING clause that it
+        # When a field occurs on the LHS of a HAVING clause that it
         # appears correctly in the GROUP BY clause
         qs = Book.objects.values_list("name").annotate(
             n_authors=Count("authors")
@@ -971,7 +1005,7 @@ class AggregationTests(TestCase):
         """
         books = Book.objects.values_list("publisher__name").annotate(
             Count("id"), Avg("price"), Avg("authors__age"), avg_pgs=Avg("pages")
-            ).order_by("-publisher__name")
+        ).order_by("-publisher__name")
         self.assertEqual(books[0], ('Sams', 1, 23.09, 45.0, 528.0))
 
     def test_annotation_disjunction(self):
@@ -991,8 +1025,8 @@ class AggregationTests(TestCase):
             Book.objects
             .annotate(n_authors=Count("authors"))
             .filter(
-                Q(name="The Definitive Guide to Django: Web Development Done Right")
-                | (Q(name="Artificial Intelligence: A Modern Approach") & Q(n_authors=3))
+                Q(name="The Definitive Guide to Django: Web Development Done Right") |
+                (Q(name="Artificial Intelligence: A Modern Approach") & Q(n_authors=3))
             )
         )
         self.assertQuerysetEqual(
@@ -1144,13 +1178,13 @@ class AggregationTests(TestCase):
 
     def test_annotate_joins(self):
         """
-        Test that the base table's join isn't promoted to LOUTER. This could
+        The base table's join isn't promoted to LOUTER. This could
         cause the query generation to fail if there is an exclude() for fk-field
         in the query, too. Refs #19087.
         """
         qs = Book.objects.annotate(n=Count('pk'))
         self.assertIs(qs.query.alias_map['aggregation_regress_book'].join_type, None)
-        # Check that the query executes without problems.
+        # The query executes without problems.
         self.assertEqual(len(qs.exclude(publisher=-1)), 6)
 
     @skipUnlessAnyDBFeature('allows_group_by_pk', 'allows_group_by_selected_pks')
@@ -1166,8 +1200,6 @@ class AggregationTests(TestCase):
         self.assertIn('id', group_by[0][0])
         self.assertNotIn('name', group_by[0][0])
         self.assertNotIn('age', group_by[0][0])
-
-        # Ensure that we get correct results.
         self.assertEqual(
             [(a.name, a.num_contacts) for a in results.order_by('name')],
             [
@@ -1192,8 +1224,6 @@ class AggregationTests(TestCase):
         self.assertIn('id', grouping[0][0])
         self.assertNotIn('name', grouping[0][0])
         self.assertNotIn('age', grouping[0][0])
-
-        # Ensure that we get correct results.
         self.assertEqual(
             [(a.name, a.num_contacts) for a in results.order_by('name')],
             [
@@ -1220,8 +1250,6 @@ class AggregationTests(TestCase):
         self.assertIn('id', grouping[0][0])
         self.assertNotIn('name', grouping[0][0])
         self.assertNotIn('contact', grouping[0][0])
-
-        # Ensure that we get correct results.
         self.assertEqual(
             [(b.name, b.num_authors) for b in results.order_by('name')],
             [
@@ -1246,19 +1274,27 @@ class AggregationTests(TestCase):
         tests aggregations with generic reverse relations
         """
         django_book = Book.objects.get(name='Practical Django Projects')
-        ItemTag.objects.create(object_id=django_book.id, tag='intermediate',
-                content_type=ContentType.objects.get_for_model(django_book))
-        ItemTag.objects.create(object_id=django_book.id, tag='django',
-                content_type=ContentType.objects.get_for_model(django_book))
+        ItemTag.objects.create(
+            object_id=django_book.id, tag='intermediate',
+            content_type=ContentType.objects.get_for_model(django_book),
+        )
+        ItemTag.objects.create(
+            object_id=django_book.id, tag='django',
+            content_type=ContentType.objects.get_for_model(django_book),
+        )
         # Assign a tag to model with same PK as the book above. If the JOIN
         # used in aggregation doesn't have content type as part of the
         # condition the annotation will also count the 'hi mom' tag for b.
         wmpk = WithManualPK.objects.create(id=django_book.pk)
-        ItemTag.objects.create(object_id=wmpk.id, tag='hi mom',
-                content_type=ContentType.objects.get_for_model(wmpk))
+        ItemTag.objects.create(
+            object_id=wmpk.id, tag='hi mom',
+            content_type=ContentType.objects.get_for_model(wmpk),
+        )
         ai_book = Book.objects.get(name__startswith='Paradigms of Artificial Intelligence')
-        ItemTag.objects.create(object_id=ai_book.id, tag='intermediate',
-                content_type=ContentType.objects.get_for_model(ai_book))
+        ItemTag.objects.create(
+            object_id=ai_book.id, tag='intermediate',
+            content_type=ContentType.objects.get_for_model(ai_book),
+        )
 
         self.assertEqual(Book.objects.aggregate(Count('tags')), {'tags__count': 3})
         results = Book.objects.annotate(Count('tags')).order_by('-tags__count', 'name')
@@ -1308,7 +1344,7 @@ class AggregationTests(TestCase):
         )
 
     def test_name_expressions(self):
-        # Test that aggregates are spotted correctly from F objects.
+        # Aggregates are spotted correctly from F objects.
         # Note that Adrian's age is 34 in the fixtures, and he has one book
         # so both conditions match one author.
         qs = Author.objects.annotate(Count('book')).filter(
@@ -1331,7 +1367,7 @@ class AggregationTests(TestCase):
 
     def test_ticket_11293_q_immutable(self):
         """
-        Check that splitting a q object to parts for where/having doesn't alter
+        Splitting a q object to parts for where/having doesn't alter
         the original q-object.
         """
         q1 = Q(isbn='')
@@ -1342,8 +1378,7 @@ class AggregationTests(TestCase):
 
     def test_fobj_group_by(self):
         """
-        Check that an F() object referring to related column works correctly
-        in group by.
+        An F() object referring to related column works correctly in group by.
         """
         qs = Book.objects.annotate(
             account=Count('authors')
@@ -1391,16 +1426,14 @@ class JoinPromotionTests(TestCase):
         b = Bravo.objects.create()
         c = Charlie.objects.create(bravo=b)
         qs = Charlie.objects.select_related('alfa').annotate(Count('bravo__charlie'))
-        self.assertQuerysetEqual(
-            qs, [c], lambda x: x)
+        self.assertSequenceEqual(qs, [c])
         self.assertIs(qs[0].alfa, None)
         a = Alfa.objects.create()
         c.alfa = a
         c.save()
         # Force re-evaluation
         qs = qs.all()
-        self.assertQuerysetEqual(
-            qs, [c], lambda x: x)
+        self.assertSequenceEqual(qs, [c])
         self.assertEqual(qs[0].alfa, a)
 
     def test_existing_join_not_promoted(self):

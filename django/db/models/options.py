@@ -1,23 +1,23 @@
-from __future__ import unicode_literals
-
+import copy
+import warnings
 from bisect import bisect
 from collections import OrderedDict, defaultdict
 from itertools import chain
 
 from django.apps import apps
 from django.conf import settings
-from django.core.exceptions import FieldDoesNotExist
+from django.core.exceptions import FieldDoesNotExist, ImproperlyConfigured
 from django.db import connections
+from django.db.models import Manager
 from django.db.models.fields import AutoField
 from django.db.models.fields.proxy import OrderWrt
-from django.utils import six
+from django.db.models.query_utils import PathInfo
 from django.utils.datastructures import ImmutableList, OrderedSet
-from django.utils.encoding import (
-    force_text, python_2_unicode_compatible, smart_text,
-)
+from django.utils.deprecation import RemovedInDjango21Warning
+from django.utils.encoding import force_text
 from django.utils.functional import cached_property
-from django.utils.text import camel_case_to_spaces
-from django.utils.translation import override, string_concat
+from django.utils.text import camel_case_to_spaces, format_lazy
+from django.utils.translation import override
 
 PROXY_PARENTS = object()
 
@@ -28,13 +28,15 @@ IMMUTABLE_WARNING = (
     "for your own use, make a copy first."
 )
 
-DEFAULT_NAMES = ('verbose_name', 'verbose_name_plural', 'db_table', 'ordering',
-                 'unique_together', 'permissions', 'get_latest_by',
-                 'order_with_respect_to', 'app_label', 'db_tablespace',
-                 'abstract', 'managed', 'proxy', 'swappable', 'auto_created',
-                 'index_together', 'apps', 'default_permissions',
-                 'select_on_save', 'default_related_name',
-                 'required_db_features', 'required_db_vendor')
+DEFAULT_NAMES = (
+    'verbose_name', 'verbose_name_plural', 'db_table', 'ordering',
+    'unique_together', 'permissions', 'get_latest_by', 'order_with_respect_to',
+    'app_label', 'db_tablespace', 'abstract', 'managed', 'proxy', 'swappable',
+    'auto_created', 'index_together', 'apps', 'default_permissions',
+    'select_on_save', 'default_related_name', 'required_db_features',
+    'required_db_vendor', 'base_manager_name', 'default_manager_name',
+    'indexes',
+)
 
 
 def normalize_together(option_together):
@@ -63,10 +65,12 @@ def make_immutable_fields_list(name, data):
     return ImmutableList(data, warning=IMMUTABLE_WARNING % name)
 
 
-@python_2_unicode_compatible
-class Options(object):
-    FORWARD_PROPERTIES = {'fields', 'many_to_many', 'concrete_fields',
-                          'local_concrete_fields', '_forward_fields_map'}
+class Options:
+    FORWARD_PROPERTIES = {
+        'fields', 'many_to_many', 'concrete_fields', 'local_concrete_fields',
+        '_forward_fields_map', 'managers', 'managers_map', 'base_manager',
+        'default_manager',
+    }
     REVERSE_PROPERTIES = {'related_objects', 'fields_map', '_relation_tree'}
 
     default_apps = apps
@@ -75,13 +79,17 @@ class Options(object):
         self._get_fields_cache = {}
         self.local_fields = []
         self.local_many_to_many = []
-        self.virtual_fields = []
+        self.private_fields = []
+        self.local_managers = []
+        self.base_manager_name = None
+        self.default_manager_name = None
         self.model_name = None
         self.verbose_name = None
         self.verbose_name_plural = None
         self.db_table = ''
         self.ordering = []
         self._ordering_clash = False
+        self.indexes = []
         self.unique_together = []
         self.index_together = []
         self.select_on_save = False
@@ -96,7 +104,6 @@ class Options(object):
         self.required_db_vendor = None
         self.meta = meta
         self.pk = None
-        self.has_auto_field = False
         self.auto_field = None
         self.abstract = False
         self.managed = True
@@ -114,12 +121,6 @@ class Options(object):
         self.swappable = None
         self.parents = OrderedDict()
         self.auto_created = False
-
-        # To handle various inheritance situations, we need to track where
-        # managers came from (concrete or abstract base classes). `managers`
-        # keeps a list of 3-tuples of the form:
-        # (creation_counter, instance, abstract(=True))
-        self.managers = []
 
         # List of all lookups defined in ForeignKey 'limit_choices_to' options
         # from *other* models. Needed for some admin checks. Internal use only.
@@ -146,20 +147,6 @@ class Options(object):
     @property
     def installed(self):
         return self.app_config is not None
-
-    @property
-    def abstract_managers(self):
-        return [
-            (counter, instance.name, instance) for counter, instance, abstract
-            in self.managers if abstract
-        ]
-
-    @property
-    def concrete_managers(self):
-        return [
-            (counter, instance.name, instance) for counter, instance, abstract
-            in self.managers if not abstract
-        ]
 
     def contribute_to_class(self, cls, name):
         from django.db import connection
@@ -199,7 +186,7 @@ class Options(object):
             # verbose_name_plural is a special case because it uses a 's'
             # by default.
             if self.verbose_name_plural is None:
-                self.verbose_name_plural = string_concat(self.verbose_name, 's')
+                self.verbose_name_plural = format_lazy('{}s', self.verbose_name)
 
             # order_with_respect_and ordering are mutually exclusive.
             self._ordering_clash = bool(self.ordering and self.order_with_respect_to)
@@ -208,7 +195,7 @@ class Options(object):
             if meta_attrs != {}:
                 raise TypeError("'class Meta' got invalid attribute(s): %s" % ','.join(meta_attrs.keys()))
         else:
-            self.verbose_name_plural = string_concat(self.verbose_name, 's')
+            self.verbose_name_plural = format_lazy('{}s', self.verbose_name)
         del self.meta
 
         # If the db_table wasn't provided, use the app_label + model_name.
@@ -227,7 +214,7 @@ class Options(object):
                     if f.name == query or f.attname == query
                 )
             except StopIteration:
-                raise FieldDoesNotExist('%s has no field named %r' % (self.object_name, query))
+                raise FieldDoesNotExist("%s has no field named '%s'" % (self.object_name, query))
 
             self.ordering = ('_order',)
             if not any(isinstance(field, OrderWrt) for field in model._meta.local_fields):
@@ -239,7 +226,7 @@ class Options(object):
             if self.parents:
                 # Promote the first parent link in lieu of adding yet another
                 # field.
-                field = next(six.itervalues(self.parents))
+                field = next(iter(self.parents.values()))
                 # Look for a local field with the same name as the
                 # first parent link. If a local field has already been
                 # created, use it instead of promoting the parent
@@ -248,18 +235,25 @@ class Options(object):
                     field = already_created[0]
                 field.primary_key = True
                 self.setup_pk(field)
+                if not field.remote_field.parent_link:
+                    raise ImproperlyConfigured(
+                        'Add parent_link=True to %s.' % field,
+                    )
             else:
-                auto = AutoField(verbose_name='ID', primary_key=True,
-                        auto_created=True)
+                auto = AutoField(verbose_name='ID', primary_key=True, auto_created=True)
                 model.add_to_class('id', auto)
 
-    def add_field(self, field, virtual=False):
+    def add_manager(self, manager):
+        self.local_managers.append(manager)
+        self._expire_cache()
+
+    def add_field(self, field, private=False):
         # Insert the given field in the order in which it was created, using
         # the "creation_counter" attribute of the field.
         # Move many-to-many related fields from self.fields into
         # self.many_to_many.
-        if virtual:
-            self.virtual_fields.append(field)
+        if private:
+            self.private_fields.append(field)
         elif field.is_relation and field.many_to_many:
             self.local_many_to_many.insert(bisect(self.local_many_to_many, field), field)
         else:
@@ -290,7 +284,7 @@ class Options(object):
 
     def setup_proxy(self, target):
         """
-        Does the internal setup so that the current model is a proxy for
+        Do the internal setup so that the current model is a proxy for
         "target".
         """
         self.pk = target._meta.pk
@@ -301,7 +295,7 @@ class Options(object):
         return '<Options for %s>' % self.object_name
 
     def __str__(self):
-        return "%s.%s" % (smart_text(self.app_label), smart_text(self.model_name))
+        return "%s.%s" % (self.app_label, self.model_name)
 
     def can_migrate(self, connection):
         """
@@ -310,7 +304,7 @@ class Options(object):
         """
         if self.proxy or self.swapped or not self.managed:
             return False
-        if isinstance(connection, six.string_types):
+        if isinstance(connection, str):
             connection = connections[connection]
         if self.required_db_vendor:
             return self.required_db_vendor == connection.vendor
@@ -321,11 +315,7 @@ class Options(object):
 
     @property
     def verbose_name_raw(self):
-        """
-        There are a few places where the untranslated verbose name is needed
-        (so that we get the same value regardless of currently active
-        locale).
-        """
+        """Return the untranslated verbose name."""
         with override(None):
             return force_text(self.verbose_name)
 
@@ -355,9 +345,85 @@ class Options(object):
         return None
 
     @cached_property
+    def managers(self):
+        managers = []
+        seen_managers = set()
+        bases = (b for b in self.model.mro() if hasattr(b, '_meta'))
+        for depth, base in enumerate(bases):
+            for manager in base._meta.local_managers:
+                if manager.name in seen_managers:
+                    continue
+
+                manager = copy.copy(manager)
+                manager.model = self.model
+                seen_managers.add(manager.name)
+                managers.append((depth, manager.creation_counter, manager))
+
+        return make_immutable_fields_list(
+            "managers",
+            (m[2] for m in sorted(managers)),
+        )
+
+    @cached_property
+    def managers_map(self):
+        return {manager.name: manager for manager in self.managers}
+
+    @cached_property
+    def base_manager(self):
+        base_manager_name = self.base_manager_name
+        if not base_manager_name:
+            # Get the first parent's base_manager_name if there's one.
+            for parent in self.model.mro()[1:]:
+                if hasattr(parent, '_meta'):
+                    if parent._base_manager.name != '_base_manager':
+                        base_manager_name = parent._base_manager.name
+                    break
+
+        if base_manager_name:
+            try:
+                return self.managers_map[base_manager_name]
+            except KeyError:
+                raise ValueError(
+                    "%s has no manager named %r" % (
+                        self.object_name,
+                        base_manager_name,
+                    )
+                )
+
+        manager = Manager()
+        manager.name = '_base_manager'
+        manager.model = self.model
+        manager.auto_created = True
+        return manager
+
+    @cached_property
+    def default_manager(self):
+        default_manager_name = self.default_manager_name
+        if not default_manager_name and not self.local_managers:
+            # Get the first parent's default_manager_name if there's one.
+            for parent in self.model.mro()[1:]:
+                if hasattr(parent, '_meta'):
+                    default_manager_name = parent._meta.default_manager_name
+                    break
+
+        if default_manager_name:
+            try:
+                return self.managers_map[default_manager_name]
+            except KeyError:
+                raise ValueError(
+                    "%s has no manager named %r" % (
+                        self.object_name,
+                        default_manager_name,
+                    )
+                )
+
+        if self.managers:
+            return self.managers[0]
+
+    @cached_property
     def fields(self):
         """
-        Returns a list of all forward fields on the model and its parents,
+        Return a list of all forward fields on the model and its parents,
         excluding ManyToManyFields.
 
         Private API intended only to be used by Django itself; get_fields()
@@ -365,28 +431,33 @@ class Options(object):
         obtaining this field list.
         """
         # For legacy reasons, the fields property should only contain forward
-        # fields that are not virtual or with a m2m cardinality. Therefore we
+        # fields that are not private or with a m2m cardinality. Therefore we
         # pass these three filters as filters to the generator.
         # The third lambda is a longwinded way of checking f.related_model - we don't
         # use that property directly because related_model is a cached property,
         # and all the models may not have been loaded yet; we don't want to cache
         # the string reference to the related_model.
-        is_not_an_m2m_field = lambda f: not (f.is_relation and f.many_to_many)
-        is_not_a_generic_relation = lambda f: not (f.is_relation and f.one_to_many)
-        is_not_a_generic_foreign_key = lambda f: not (
-            f.is_relation and f.many_to_one and not (hasattr(f.remote_field, 'model') and f.remote_field.model)
-        )
+        def is_not_an_m2m_field(f):
+            return not (f.is_relation and f.many_to_many)
+
+        def is_not_a_generic_relation(f):
+            return not (f.is_relation and f.one_to_many)
+
+        def is_not_a_generic_foreign_key(f):
+            return not (
+                f.is_relation and f.many_to_one and not (hasattr(f.remote_field, 'model') and f.remote_field.model)
+            )
+
         return make_immutable_fields_list(
             "fields",
-            (f for f in self._get_fields(reverse=False) if
-            is_not_an_m2m_field(f) and is_not_a_generic_relation(f)
-            and is_not_a_generic_foreign_key(f))
+            (f for f in self._get_fields(reverse=False)
+             if is_not_an_m2m_field(f) and is_not_a_generic_relation(f) and is_not_a_generic_foreign_key(f))
         )
 
     @cached_property
     def concrete_fields(self):
         """
-        Returns a list of all concrete fields on the model and its parents.
+        Return a list of all concrete fields on the model and its parents.
 
         Private API intended only to be used by Django itself; get_fields()
         combined with filtering of field properties is the public API for
@@ -399,7 +470,7 @@ class Options(object):
     @cached_property
     def local_concrete_fields(self):
         """
-        Returns a list of all concrete fields on the model.
+        Return a list of all concrete fields on the model.
 
         Private API intended only to be used by Django itself; get_fields()
         combined with filtering of field properties is the public API for
@@ -412,7 +483,7 @@ class Options(object):
     @cached_property
     def many_to_many(self):
         """
-        Returns a list of all many to many fields on the model and its parents.
+        Return a list of all many to many fields on the model and its parents.
 
         Private API intended only to be used by Django itself; get_fields()
         combined with filtering of field properties is the public API for
@@ -420,14 +491,13 @@ class Options(object):
         """
         return make_immutable_fields_list(
             "many_to_many",
-            (f for f in self._get_fields(reverse=False)
-            if f.is_relation and f.many_to_many)
+            (f for f in self._get_fields(reverse=False) if f.is_relation and f.many_to_many)
         )
 
     @cached_property
     def related_objects(self):
         """
-        Returns all related objects pointing to the current model. The related
+        Return all related objects pointing to the current model. The related
         objects can come from a one-to-one, one-to-many, or many-to-many field
         relation type.
 
@@ -438,8 +508,7 @@ class Options(object):
         all_related_fields = self._get_fields(forward=False, reverse=True, include_hidden=True)
         return make_immutable_fields_list(
             "related_objects",
-            (obj for obj in all_related_fields
-            if not obj.hidden or obj.field.many_to_many)
+            (obj for obj in all_related_fields if not obj.hidden or obj.field.many_to_many)
         )
 
     @cached_property
@@ -485,7 +554,7 @@ class Options(object):
             # unavailable, therefore we throw a FieldDoesNotExist exception.
             if not self.apps.models_ready:
                 raise FieldDoesNotExist(
-                    "%s has no field named %r. The app cache isn't ready yet, "
+                    "%s has no field named '%s'. The app cache isn't ready yet, "
                     "so if this is an auto-created related field, it won't "
                     "be available yet." % (self.object_name, field_name)
                 )
@@ -495,7 +564,7 @@ class Options(object):
             # field map.
             return self.fields_map[field_name]
         except KeyError:
-            raise FieldDoesNotExist('%s has no field named %r' % (self.object_name, field_name))
+            raise FieldDoesNotExist("%s has no field named '%s'" % (self.object_name, field_name))
 
     def get_base_chain(self, model):
         """
@@ -516,7 +585,7 @@ class Options(object):
 
     def get_parent_list(self):
         """
-        Returns all the ancestors of this model as a list ordered by MRO.
+        Return all the ancestors of this model as a list ordered by MRO.
         Useful for determining if something is an ancestor, regardless of lineage.
         """
         result = OrderedSet(self.parents)
@@ -527,12 +596,12 @@ class Options(object):
 
     def get_ancestor_link(self, ancestor):
         """
-        Returns the field on the current model which points to the given
+        Return the field on the current model which points to the given
         "ancestor". This is possible an indirect link (a pointer to a parent
         model, which points, eventually, to the ancestor). Used when
         constructing table joins for model inheritance.
 
-        Returns None if the model isn't an ancestor of this one.
+        Return None if the model isn't an ancestor of this one.
         """
         if ancestor in self.parents:
             return self.parents[ancestor]
@@ -544,6 +613,50 @@ class Options(object):
                 # of the chain to the ancestor is that parent
                 # links
                 return self.parents[parent] or parent_link
+
+    def get_path_to_parent(self, parent):
+        """
+        Return a list of PathInfos containing the path from the current
+        model to the parent model, or an empty list if parent is not a
+        parent of the current model.
+        """
+        if self.model is parent:
+            return []
+        # Skip the chain of proxy to the concrete proxied model.
+        proxied_model = self.concrete_model
+        path = []
+        opts = self
+        for int_model in self.get_base_chain(parent):
+            if int_model is proxied_model:
+                opts = int_model._meta
+            else:
+                final_field = opts.parents[int_model]
+                targets = (final_field.remote_field.get_related_field(),)
+                opts = int_model._meta
+                path.append(PathInfo(final_field.model._meta, opts, targets, final_field, False, True))
+        return path
+
+    def get_path_from_parent(self, parent):
+        """
+        Return a list of PathInfos containing the path from the parent
+        model to the current model, or an empty list if parent is not a
+        parent of the current model.
+        """
+        if self.model is parent:
+            return []
+        model = self.concrete_model
+        # Get a reversed base chain including both the current and parent
+        # models.
+        chain = model._meta.get_base_chain(parent)
+        chain.reverse()
+        chain.append(model)
+        # Construct a list of the PathInfos between models in chain.
+        path = []
+        for i, ancestor in enumerate(chain[:-1]):
+            child = chain[i + 1]
+            link = child._meta.get_ancestor_link(ancestor)
+            path.extend(link.get_reverse_path_info())
+        return path
 
     def _populate_directed_relation_graph(self):
         """
@@ -566,7 +679,7 @@ class Options(object):
                 if f.is_relation and f.related_model is not None
             )
             for f in fields_with_relations:
-                if not isinstance(f.remote_field.model, six.string_types):
+                if not isinstance(f.remote_field.model, str):
                     related_objects_graph[f.remote_field.model._meta.concrete_model._meta].append(f)
 
         for model in all_models:
@@ -600,7 +713,7 @@ class Options(object):
 
     def get_fields(self, include_parents=True, include_hidden=False):
         """
-        Returns a list of fields associated to the model. By default, includes
+        Return a list of fields associated to the model. By default, include
         forward and reverse fields, fields derived from inheritance, but not
         hidden fields. The returned fields can be changed using the parameters:
 
@@ -683,14 +796,14 @@ class Options(object):
             fields.extend(
                 field for field in chain(self.local_fields, self.local_many_to_many)
             )
-            # Virtual fields are recopied to each child model, and they get a
+            # Private fields are recopied to each child model, and they get a
             # different model as field.model in each child. Hence we have to
-            # add the virtual fields separately from the topmost call. If we
+            # add the private fields separately from the topmost call. If we
             # did this recursively similar to local_fields, we would get field
             # instances with field.model != self.model.
             if topmost_call:
                 fields.extend(
-                    f for f in self.virtual_fields
+                    f for f in self.private_fields
                 )
 
         # In order to avoid list manipulation. Always
@@ -700,3 +813,27 @@ class Options(object):
         # Store result into cache for later access
         self._get_fields_cache[cache_key] = fields
         return fields
+
+    @property
+    def has_auto_field(self):
+        warnings.warn(
+            'Model._meta.has_auto_field is deprecated in favor of checking if '
+            'Model._meta.auto_field is not None.',
+            RemovedInDjango21Warning, stacklevel=2
+        )
+        return self.auto_field is not None
+
+    @has_auto_field.setter
+    def has_auto_field(self, value):
+        pass
+
+    @cached_property
+    def _property_names(self):
+        """
+        Return a set of the names of the properties defined on the model.
+        Internal helper for model initialization.
+        """
+        return frozenset({
+            attr for attr in
+            dir(self.model) if isinstance(getattr(self.model, attr), property)
+        })

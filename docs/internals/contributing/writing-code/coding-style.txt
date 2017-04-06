@@ -4,8 +4,10 @@ Coding style
 
 Please follow these coding standards when writing code for inclusion in Django.
 
+.. _coding-style-python:
+
 Python style
-------------
+============
 
 * Please conform to the indentation style dictated in the ``.editorconfig``
   file. We recommend using a text editor with `EditorConfig`_ support to avoid
@@ -32,27 +34,35 @@ Python style
 * Use four spaces for indentation.
 
 * Use underscores, not camelCase, for variable, function and method names
-  (i.e. ``poll.get_unique_voters()``, not ``poll.getUniqueVoters``).
+  (i.e. ``poll.get_unique_voters()``, not ``poll.getUniqueVoters()``).
 
 * Use ``InitialCaps`` for class names (or for factory functions that
   return classes).
 
-* In docstrings, follow :pep:`257`. For example::
-
-      def foo():
-          """
-          Calculate something and return the result.
-          """
-          ...
+* In docstrings, follow the style of existing docstrings and :pep:`257`.
 
 * In tests, use :meth:`~django.test.SimpleTestCase.assertRaisesMessage` instead
   of :meth:`~unittest.TestCase.assertRaises` so you can check the exception
-  message. Use :meth:`~unittest.TestCase.assertRaisesRegex`
-  (``six.assertRaisesRegex()`` as long as we support Python 2) only if you need
-  to use regular expression matching.
+  message. Use :meth:`~unittest.TestCase.assertRaisesRegex` only if you need
+  regular expression matching.
+
+* In test docstrings, state the expected behavior that each test demonstrates.
+  Don't include preambles such as "Tests that" or "Ensures that".
+
+  Reserve ticket references for obscure issues where the ticket has additional
+  details that can't be easily described in docstrings or comments. Include the
+  ticket number at the end of a sentence like this::
+
+    def test_foo():
+        """
+        A test docstring looks like this (#123456).
+        """
+        ...
+
+.. _coding-style-imports:
 
 Imports
--------
+=======
 
 * Use `isort <https://github.com/timothycrosley/isort#readme>`_ to automate
   import sorting using the guidelines below.
@@ -113,9 +123,9 @@ Imports
 
       # try/except
       try:
-          import pytz
+          import yaml
       except ImportError:
-          pytz = None
+          yaml = None
 
       CONSTANT = 'foo'
 
@@ -125,14 +135,14 @@ Imports
 
 * Use convenience imports whenever available. For example, do this::
 
-      from django.views.generic import View
+      from django.views import View
 
   instead of::
 
       from django.views.generic.base import View
 
 Template style
---------------
+==============
 
 * In Django template code, put one (and only one) space between the curly
   brackets and the tag contents.
@@ -150,7 +160,7 @@ Template style
       {{foo}}
 
 View style
-----------
+==========
 
 * In Django views, the first parameter in a view function should be called
   ``request``.
@@ -166,7 +176,7 @@ View style
           # ...
 
 Model style
------------
+===========
 
 * Field names should be all lowercase, using underscores instead of
   camelCase.
@@ -212,10 +222,6 @@ Model style
           first_name = models.CharField(max_length=20)
           last_name = models.CharField(max_length=40)
 
-* If you define a ``__str__`` method (previously ``__unicode__`` before Python 3
-  was supported), decorate the model class with
-  :func:`~django.utils.encoding.python_2_unicode_compatible`.
-
 * The order of model inner classes and standard methods should be as
   follows (noting that these are not all required):
 
@@ -240,7 +246,7 @@ Model style
         )
 
 Use of ``django.conf.settings``
--------------------------------
+===============================
 
 Modules should not in general use settings stored in ``django.conf.settings``
 at the top level (i.e. evaluated when the module is imported). The explanation
@@ -276,7 +282,7 @@ such as ``django.utils.functional.LazyObject``,
 ``django.utils.functional.lazy()`` or ``lambda``.
 
 Miscellaneous
--------------
+=============
 
 * Mark all strings for internationalization; see the :doc:`i18n
   documentation </topics/i18n/index>` for details.
@@ -299,7 +305,7 @@ Miscellaneous
   single trivial change.
 
 JavaScript style
-----------------
+================
 
 For details about the JavaScript code style used by Django, see
 :doc:`javascript`.

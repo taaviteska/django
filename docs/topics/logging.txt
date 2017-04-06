@@ -204,7 +204,8 @@ formatters to ensure that logging output is output in a useful way.
 
 Python's logging library provides several techniques to configure
 logging, ranging from a programmatic interface to configuration files.
-By default, Django uses the `dictConfig format`_.
+By default, Django uses the :ref:`dictConfig format
+<logging-config-dictschema>`.
 
 In order to configure logging, you use :setting:`LOGGING` to define a
 dictionary of logging settings. These settings describes the loggers,
@@ -231,14 +232,12 @@ Logging is configured as part of the general Django ``setup()`` function.
 Therefore, you can be certain that loggers are always ready for use in your
 project code.
 
-.. _dictConfig format: https://docs.python.org/library/logging.config.html#configuration-dictionary-schema
-
 Examples
 --------
 
-The full documentation for `dictConfig format`_ is the best source of
-information about logging configuration dictionaries. However, to give
-you a taste of what is possible, here are several examples.
+The full documentation for :ref:`dictConfig format <logging-config-dictschema>`
+is the best source of information about logging configuration dictionaries.
+However, to give you a taste of what is possible, here are several examples.
 
 First, here's a simple configuration which writes all logging from the
 :ref:`django-logger` logger to a local file::
@@ -292,11 +291,6 @@ verbose as it includes all database queries::
             },
         },
     }
-
-.. versionchanged:: 1.9
-
-    Django's default logging configuration changed. See :ref:`the release notes
-    <default-logging-changes-19>` for a description of the changes.
 
 Finally, here's an example of a fairly complex logging setup::
 
@@ -364,7 +358,7 @@ This logging configuration does the following things:
     The ``format`` string is a normal Python formatting string
     describing the details that are to be output on each logging
     line. The full list of detail that can be output can be
-    found in the `formatter documentation`_.
+    found in :ref:`formatter-objects`.
 
   * ``verbose``, that outputs the log level name, the log
     message, plus the time, process, thread and module that
@@ -383,7 +377,7 @@ This logging configuration does the following things:
 
 * Defines two handlers:
 
-  * ``console``, a StreamHandler, which will print any ``DEBUG``
+  * ``console``, a StreamHandler, which will print any ``INFO``
     (or higher) message to stderr. This handler uses the ``simple`` output
     format.
 
@@ -407,8 +401,6 @@ This logging configuration does the following things:
     means that all ``INFO`` level messages (or higher) will be
     printed to the console; ``ERROR`` and ``CRITICAL``
     messages will also be output via email.
-
-.. _formatter documentation: https://docs.python.org/library/logging.html#formatter-objects
 
 Custom logging configuration
 ----------------------------
@@ -484,12 +476,26 @@ Messages to this logger have the following extra context:
 * ``request``: The request object that generated the logging
   message.
 
+.. _django-server-logger:
+
+``django.server``
+~~~~~~~~~~~~~~~~~
+
+Log messages related to the handling of requests received by the server invoked
+by the :djadmin:`runserver` command. HTTP 5XX responses are logged as ``ERROR``
+messages, 4XX responses are logged as ``WARNING`` messages, and everything else
+is logged as ``INFO``.
+
+Messages to this logger have the following extra context:
+
+* ``status_code``: The HTTP response code associated with the request.
+
+* ``request``: The request object that generated the logging message.
+
 .. _django-template-logger:
 
 ``django.template``
 ~~~~~~~~~~~~~~~~~~~
-
-.. versionadded:: 1.9
 
 Log messages related to the rendering of templates.
 
@@ -524,20 +530,23 @@ This logging does not include framework-level initialization (e.g.
 ``COMMIT``, and ``ROLLBACK``). Turn on query logging in your database if you
 wish to view all database queries.
 
+.. _django-security-logger:
+
 ``django.security.*``
 ~~~~~~~~~~~~~~~~~~~~~~
 
 The security loggers will receive messages on any occurrence of
-:exc:`~django.core.exceptions.SuspiciousOperation`. There is a sub-logger for
-each sub-type of SuspiciousOperation. The level of the log event depends on
-where the exception is handled.  Most occurrences are logged as a warning, while
+:exc:`~django.core.exceptions.SuspiciousOperation` and other security-related
+errors. There is a sub-logger for each subtype of security error, including all
+``SuspiciousOperation``\s. The level of the log event depends on where the
+exception is handled.  Most occurrences are logged as a warning, while
 any ``SuspiciousOperation`` that reaches the WSGI handler will be logged as an
 error. For example, when an HTTP ``Host`` header is included in a request from
 a client that does not match :setting:`ALLOWED_HOSTS`, Django will return a 400
 response, and an error message will be logged to the
 ``django.security.DisallowedHost`` logger.
 
-These log events will reach the 'django' logger by default, which mails error
+These log events will reach the ``django`` logger by default, which mails error
 events to admins when ``DEBUG=False``. Requests resulting in a 400 response due
 to a ``SuspiciousOperation`` will not be logged to the ``django.request``
 logger, but only to the ``django.security`` logger.
@@ -559,12 +568,19 @@ specific logger following this example:
         },
     },
 
+Other ``django.security`` loggers not based on ``SuspiciousOperation`` are:
+
+* ``django.security.csrf``: For :ref:`CSRF failures <csrf-rejected-requests>`.
+
 ``django.db.backends.schema``
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 Logs the SQL queries that are executed during schema changes to the database by
 the :doc:`migrations framework </topics/migrations>`. Note that it won't log the
 queries executed by :class:`~django.db.migrations.operations.RunPython`.
+Messages to this logger have ``params`` and ``sql`` in their extra context (but
+unlike ``django.db.backends``, not duration). The values have the same meaning
+as explained in :ref:`django-db-logger`.
 
 Handlers
 --------
@@ -578,7 +594,7 @@ Python logging module.
     message it receives.
 
     If the log record contains a ``request`` attribute, the full details
-    of the request will be included in the email. The email subject will be
+    of the request will be included in the email. The email subject will
     include the phrase "internal IP" if the client's IP address is in the
     :setting:`INTERNAL_IPS` setting; if not, it will include "EXTERNAL IP".
 
@@ -721,18 +737,15 @@ When :setting:`DEBUG` is ``True``:
 * The ``django`` catch-all logger sends all messages at the ``INFO`` level or
   higher to the console.
 
-* The ``py.warnings`` logger, which handles messages from ``warnings.warn()``,
-  sends messages to the console.
-
 When :setting:`DEBUG` is ``False``:
 
 * The ``django`` logger send messages with ``ERROR`` or ``CRITICAL`` level to
   :class:`AdminEmailHandler`.
 
-.. versionchanged:: 1.9
+Independent of the value of :setting:`DEBUG`:
 
-    Django's default logging configuration changed. See :ref:`the release notes
-    <default-logging-changes-19>` for a description of the changes.
+* The :ref:`django-server-logger` logger sends all messages at the ``INFO``
+  level or higher to the console.
 
 See also :ref:`Configuring logging <configuring-logging>` to learn how you can
 complement or replace this default logging configuration.

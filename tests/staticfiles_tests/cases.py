@@ -1,6 +1,3 @@
-# -*- encoding: utf-8 -*-
-from __future__ import unicode_literals
-
 import codecs
 import os
 import shutil
@@ -10,13 +7,11 @@ from django.conf import settings
 from django.core.management import call_command
 from django.template import Context, Template
 from django.test import SimpleTestCase, override_settings
-from django.utils import six
-from django.utils.encoding import force_text
 
 from .settings import TEST_SETTINGS
 
 
-class BaseStaticFilesTestCase(object):
+class BaseStaticFilesMixin:
     """
     Test case with a couple utility assertions.
     """
@@ -24,17 +19,18 @@ class BaseStaticFilesTestCase(object):
     def assertFileContains(self, filepath, text):
         self.assertIn(
             text,
-            self._get_file(force_text(filepath)),
+            self._get_file(filepath),
             "'%s' not in '%s'" % (text, filepath),
         )
 
     def assertFileNotFound(self, filepath):
-        self.assertRaises(IOError, self._get_file, filepath)
+        with self.assertRaises(IOError):
+            self._get_file(filepath)
 
     def render_template(self, template, **kwargs):
-        if isinstance(template, six.string_types):
+        if isinstance(template, str):
             template = Template(template)
-        return template.render(Context(kwargs)).strip()
+        return template.render(Context(**kwargs)).strip()
 
     def static_template_snippet(self, path, asvar=False):
         if asvar:
@@ -46,15 +42,17 @@ class BaseStaticFilesTestCase(object):
         self.assertEqual(self.render_template(template, **kwargs), result)
 
     def assertStaticRaises(self, exc, path, result, asvar=False, **kwargs):
-        self.assertRaises(exc, self.assertStaticRenders, path, result, **kwargs)
+        with self.assertRaises(exc):
+            self.assertStaticRenders(path, result, **kwargs)
 
 
 @override_settings(**TEST_SETTINGS)
-class StaticFilesTestCase(BaseStaticFilesTestCase, SimpleTestCase):
+class StaticFilesTestCase(BaseStaticFilesMixin, SimpleTestCase):
     pass
 
 
-class BaseCollectionTestCase(BaseStaticFilesTestCase):
+@override_settings(**TEST_SETTINGS)
+class CollectionTestCase(BaseStaticFilesMixin, SimpleTestCase):
     """
     Tests shared by all file finding features (collectstatic,
     findstatic, and static serve view).
@@ -64,7 +62,7 @@ class BaseCollectionTestCase(BaseStaticFilesTestCase):
     all these tests.
     """
     def setUp(self):
-        super(BaseCollectionTestCase, self).setUp()
+        super().setUp()
         temp_dir = tempfile.mkdtemp()
         # Override the STATIC_ROOT for all tests from setUp to tearDown
         # rather than as a context manager
@@ -72,14 +70,14 @@ class BaseCollectionTestCase(BaseStaticFilesTestCase):
         self.patched_settings.enable()
         self.run_collectstatic()
         # Same comment as in runtests.teardown.
-        self.addCleanup(shutil.rmtree, six.text_type(temp_dir))
+        self.addCleanup(shutil.rmtree, temp_dir)
 
     def tearDown(self):
         self.patched_settings.disable()
-        super(BaseCollectionTestCase, self).tearDown()
+        super().tearDown()
 
-    def run_collectstatic(self, **kwargs):
-        call_command('collectstatic', interactive=False, verbosity=0,
+    def run_collectstatic(self, *, verbosity=0, **kwargs):
+        call_command('collectstatic', interactive=False, verbosity=verbosity,
                      ignore_patterns=['*.ignoreme'], **kwargs)
 
     def _get_file(self, filepath):
@@ -89,11 +87,7 @@ class BaseCollectionTestCase(BaseStaticFilesTestCase):
             return f.read()
 
 
-class CollectionTestCase(BaseCollectionTestCase, StaticFilesTestCase):
-    pass
-
-
-class TestDefaults(object):
+class TestDefaults:
     """
     A few standard test cases.
     """
@@ -134,3 +128,6 @@ class TestDefaults(object):
         Can find a file with capital letters.
         """
         self.assertFileContains('test/camelCase.txt', 'camelCase')
+
+    def test_filename_with_percent_sign(self):
+        self.assertFileContains('test/%2F.txt', '%2F content')
